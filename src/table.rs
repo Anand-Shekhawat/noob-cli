@@ -25,15 +25,17 @@ pub enum Group {
     Looking,
     Making,
     Moving,
+    Finding,
     Other,
 }
 
 impl Group {
-    pub const ALL: [Group; 5] = [
+    pub const ALL: [Group; 6] = [
         Group::GettingAround,
         Group::Looking,
         Group::Making,
         Group::Moving,
+        Group::Finding,
         Group::Other,
     ];
 
@@ -43,6 +45,7 @@ impl Group {
             Group::Looking => "Looking at things",
             Group::Making => "Making and changing",
             Group::Moving => "Copying, moving, deleting",
+            Group::Finding => "Finding",
             Group::Other => "Other",
         }
     }
@@ -121,11 +124,43 @@ pub static COMMANDS: &[Spec] = &[
     // Looking at things
     Spec {
         phrases: &["show files", "list files"],
-        shape: Shape::Nothing,
+        shape: Shape::Optional,
         example: "show files",
-        summary: "list the files and folders here",
+        summary: "list the files and folders here (or in a folder you name)",
         group: Group::Looking,
-        build: |_| Command::ShowFiles,
+        build: |names| Command::ShowFiles(optional(names)),
+    },
+    Spec {
+        phrases: &["show all files", "show hidden files"],
+        shape: Shape::Optional,
+        example: "show all files",
+        summary: "also list hidden files (names starting with .)",
+        group: Group::Looking,
+        build: |names| Command::ShowAllFiles(optional(names)),
+    },
+    Spec {
+        phrases: &["show details"],
+        shape: Shape::Optional,
+        example: "show details",
+        summary: "list with sizes, and when each thing last changed",
+        group: Group::Looking,
+        build: |names| Command::ShowDetails(optional(names)),
+    },
+    Spec {
+        phrases: &["show tree"],
+        shape: Shape::Optional,
+        example: "show tree",
+        summary: "draw the folders inside folders, as a tree",
+        group: Group::Looking,
+        build: |names| Command::ShowTree(optional(names)),
+    },
+    Spec {
+        phrases: &["show size", "how big is"],
+        shape: Shape::One,
+        example: "show size photos",
+        summary: "how much space a file or folder takes up",
+        group: Group::Looking,
+        build: |names| Command::ShowSize(one(names)),
     },
     Spec {
         phrases: &["read"],
@@ -152,6 +187,38 @@ pub static COMMANDS: &[Spec] = &[
         group: Group::Making,
         build: |names| Command::MakeFile(one(names)),
     },
+    Spec {
+        phrases: &["write"],
+        shape: Shape::Two {
+            joiners: &["to", "into"],
+        },
+        example: "write \"hello\" to notes.txt",
+        summary: "replace a file's text (asks first if it has some)",
+        group: Group::Making,
+        build: |names| {
+            let (text, file) = two(names);
+            Command::Write { text, file }
+        },
+    },
+    Spec {
+        phrases: &["add"],
+        shape: Shape::Two { joiners: &["to"] },
+        example: "add \"buy milk\" to list.txt",
+        summary: "add a line to the end of a file",
+        group: Group::Making,
+        build: |names| {
+            let (text, file) = two(names);
+            Command::Add { text, file }
+        },
+    },
+    Spec {
+        phrases: &["open"],
+        shape: Shape::One,
+        example: "open notes.txt",
+        summary: "open a file or folder in its usual app",
+        group: Group::Making,
+        build: |names| Command::Open(one(names)),
+    },
     // Copying, moving, deleting
     Spec {
         phrases: &["copy"],
@@ -159,7 +226,7 @@ pub static COMMANDS: &[Spec] = &[
             joiners: &["to", "into"],
         },
         example: "copy a.txt to b.txt",
-        summary: "copy a file (to a new name, or into a folder)",
+        summary: "copy a file or folder (to a new name, or into a folder)",
         group: Group::Moving,
         build: |names| {
             let (from, to) = two(names);
@@ -194,9 +261,29 @@ pub static COMMANDS: &[Spec] = &[
         phrases: &["delete", "remove"],
         shape: Shape::One,
         example: "delete notes.txt",
-        summary: "delete a file or an empty folder (asks first)",
+        summary: "move a file or folder to the Trash (asks first)",
         group: Group::Moving,
         build: |names| Command::Delete(one(names)),
+    },
+    // Finding
+    Spec {
+        phrases: &["find file", "find folder"],
+        shape: Shape::One,
+        example: "find file cat",
+        summary: "find things by name, here and in every folder inside",
+        group: Group::Finding,
+        build: |names| Command::FindFile(one(names)),
+    },
+    Spec {
+        phrases: &["find", "search"],
+        shape: Shape::Two { joiners: &["in"] },
+        example: "find \"hello\" in notes.txt",
+        summary: "find text inside a file, or inside every file in a folder",
+        group: Group::Finding,
+        build: |names| {
+            let (text, place) = two(names);
+            Command::FindText { text, place }
+        },
     },
     // Other
     Spec {

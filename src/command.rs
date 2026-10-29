@@ -2,17 +2,37 @@
 //!
 //! An `enum` is a type that can be exactly one of several choices.
 //! Some choices carry data, e.g. `MakeFolder` remembers the folder's name.
+//! `Option<String>` means "maybe a name": `show files` or `show files photos`.
+
+use std::path::Path;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Command {
+    // Getting around
     WhereAmI,
     GoInto(String),
     GoBack,
     GoHome,
-    ShowFiles,
+    // Looking at things
+    ShowFiles(Option<String>),
+    ShowAllFiles(Option<String>),
+    ShowDetails(Option<String>),
+    ShowTree(Option<String>),
+    ShowSize(String),
+    Read(String),
+    // Making and changing
     MakeFolder(String),
     MakeFile(String),
-    Read(String),
+    Write {
+        text: String,
+        file: String,
+    },
+    Add {
+        text: String,
+        file: String,
+    },
+    Open(String),
+    // Copying, moving, deleting
     Copy {
         from: String,
         to: String,
@@ -26,6 +46,13 @@ pub enum Command {
         to: String,
     },
     Delete(String),
+    // Finding
+    FindFile(String),
+    FindText {
+        text: String,
+        place: String,
+    },
+    // Other
     Clear,
     /// `help` on its own, or `help copy` for one command.
     Help(Option<String>),
@@ -34,21 +61,50 @@ pub enum Command {
 
 impl Command {
     /// The real terminal command that does the same job, so you learn it as you go.
+    /// (Worked out before the command runs, because a few depend on what's there.)
     pub fn real_command(&self) -> Option<String> {
         let text = match self {
             Command::WhereAmI => "pwd".to_string(),
             Command::GoInto(name) => format!("cd {}", quote(name)),
             Command::GoBack => "cd ..".to_string(),
             Command::GoHome => "cd ~".to_string(),
-            Command::ShowFiles => "ls".to_string(),
+            Command::ShowFiles(folder) => with_folder("ls", folder),
+            Command::ShowAllFiles(folder) => with_folder("ls -a", folder),
+            Command::ShowDetails(folder) => with_folder("ls -l", folder),
+            Command::ShowTree(folder) => with_folder("ls -R", folder),
+            Command::ShowSize(name) => format!("du -sh {}", quote(name)),
+            Command::Read(name) => format!("cat {}", quote(name)),
             Command::MakeFolder(name) => format!("mkdir -p {}", quote(name)),
             Command::MakeFile(name) => format!("touch {}", quote(name)),
-            Command::Read(name) => format!("cat {}", quote(name)),
-            Command::Copy { from, to } => format!("cp {} {}", quote(from), quote(to)),
+            Command::Write { text, file } => format!("echo {} > {}", quote(text), quote(file)),
+            Command::Add { text, file } => format!("echo {} >> {}", quote(text), quote(file)),
+            Command::Open(name) => format!("{} {}", opener(), quote(name)),
+            Command::Copy { from, to } => {
+                let copy = if Path::new(from).is_dir() {
+                    "cp -R"
+                } else {
+                    "cp"
+                };
+                format!("{copy} {} {}", quote(from), quote(to))
+            }
             Command::Move { from, to } | Command::Rename { from, to } => {
                 format!("mv {} {}", quote(from), quote(to))
             }
-            Command::Delete(name) => format!("rm {0}   (for a folder: rmdir {0})", quote(name)),
+            Command::Delete(name) => {
+                let remove = if Path::new(name).is_dir() {
+                    "rm -r"
+                } else {
+                    "rm"
+                };
+                format!(
+                    "{remove} {}   (careful: rm skips the Trash, so it's gone for good)",
+                    quote(name)
+                )
+            }
+            Command::FindFile(name) => format!("find . -iname {}", quote(&format!("*{name}*"))),
+            Command::FindText { text, place } => {
+                format!("grep -rni {} {}", quote(text), quote(place))
+            }
             Command::Clear => "clear".to_string(),
             Command::Help(_) | Command::Bye => return None,
         };
@@ -60,13 +116,24 @@ impl Command {
     pub fn prompt_only(&self) -> bool {
         matches!(self, Command::GoInto(_) | Command::GoBack | Command::GoHome)
     }
+}
 
-    /// Risky commands return a question that must be answered "yes" before they run.
-    pub fn confirmation_question(&self) -> Option<String> {
-        match self {
-            Command::Delete(name) => Some(format!("Delete \"{name}\"? This can't be undone.")),
-            _ => None,
-        }
+/// The program that opens a file in its usual app on this kind of computer.
+pub fn opener() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    }
+}
+
+/// "ls", or "ls photos" when a folder was named.
+fn with_folder(command: &str, folder: &Option<String>) -> String {
+    match folder {
+        Some(folder) => format!("{command} {}", quote(folder)),
+        None => command.to_string(),
     }
 }
 
@@ -111,10 +178,35 @@ mod tests {
     }
 
     #[test]
+    fn real_commands_warn_that_rm_skips_the_trash() {
+        let real = Command::Delete("a.txt".to_string()).real_command().unwrap();
+        assert!(real.contains("skips the Trash"));
+    }
+
+    #[test]
+    fn real_commands_for_the_new_powers() {
+        let real = |command: Command| command.real_command().unwrap();
+        assert_eq!(real(Command::ShowFiles(None)), "ls");
+        assert_eq!(
+            real(Command::ShowDetails(Some("docs".to_string()))),
+            "ls -l docs"
+        );
+        assert_eq!(
+            real(Command::FindFile("cat".to_string())),
+            "find . -iname '*cat*'"
+        );
+        let add = Command::Add {
+            text: "buy milk".to_string(),
+            file: "list.txt".to_string(),
+        };
+        assert_eq!(real(add), "echo 'buy milk' >> list.txt");
+    }
+
+    #[test]
     fn going_places_only_works_in_the_prompt() {
         assert!(Command::GoBack.prompt_only());
         assert!(Command::GoInto("photos".to_string()).prompt_only());
-        assert!(!Command::ShowFiles.prompt_only());
+        assert!(!Command::ShowFiles(None).prompt_only());
         assert_eq!(Command::GoHome.real_command(), Some("cd ~".to_string()));
     }
 
@@ -122,13 +214,5 @@ mod tests {
     fn quotes_names_with_spaces() {
         let cmd = Command::MakeFolder("my photos".to_string());
         assert_eq!(cmd.real_command(), Some("mkdir -p 'my photos'".to_string()));
-    }
-
-    #[test]
-    fn only_delete_asks_for_confirmation() {
-        let delete = Command::Delete("a.txt".to_string());
-        let make = Command::MakeFile("a.txt".to_string());
-        assert!(delete.confirmation_question().unwrap().contains("a.txt"));
-        assert_eq!(make.confirmation_question(), None);
     }
 }

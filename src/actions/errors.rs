@@ -69,6 +69,7 @@ pub(super) fn friendly(error: io::Error, name: &str) -> ActionError {
         io::ErrorKind::PermissionDenied => ActionError::NotAllowed(name),
         io::ErrorKind::InvalidData => ActionError::NotText(name),
         io::ErrorKind::DirectoryNotEmpty => ActionError::FolderNotEmpty(name),
+        io::ErrorKind::NotADirectory => ActionError::NotAFolder(name),
         io::ErrorKind::CrossesDevices => ActionError::Other(format!(
             "\"{name}\" is on a different drive, and Noob can't move between drives yet."
         )),

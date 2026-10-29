@@ -2,12 +2,15 @@
 
 mod errors;
 mod files;
+mod finding;
 mod listing;
 mod moving;
 mod navigate;
 mod paths;
 #[cfg(test)]
 mod test_support;
+mod walk;
+mod words;
 
 pub use errors::ActionError;
 pub use paths::short;
@@ -29,6 +32,15 @@ pub enum Reply {
     Show(String),
 }
 
+/// Risky commands return a question that must be answered "yes" before they run.
+pub fn question(command: &Command) -> Option<String> {
+    match command {
+        Command::Delete(name) => Some(moving::delete_question(name)),
+        Command::Write { file, .. } => files::replace_question(file),
+        _ => None,
+    }
+}
+
 /// Checks that a risky command can actually run, so we never ask
 /// "are you sure?" about something that is going to fail anyway.
 pub fn check_ready(command: &Command) -> Result<(), ActionError> {
@@ -45,16 +57,30 @@ pub fn execute(command: &Command) -> Result<Reply, ActionError> {
         Command::GoInto(name) => navigate::go_into(name),
         Command::GoBack => navigate::go_back(),
         Command::GoHome => navigate::go_home(),
-        Command::ShowFiles => listing::show_files(Path::new(".")),
+        Command::ShowFiles(folder) => listing::show_files(here_or(folder), false),
+        Command::ShowAllFiles(folder) => listing::show_files(here_or(folder), true),
+        Command::ShowDetails(folder) => listing::show_details(here_or(folder)),
+        Command::ShowTree(folder) => listing::show_tree(here_or(folder)),
+        Command::ShowSize(name) => listing::show_size(name),
         Command::Read(name) => files::read(name),
         Command::MakeFolder(name) => files::make_folder(name),
         Command::MakeFile(name) => files::make_file(name),
+        Command::Write { text, file } => files::write(text, file),
+        Command::Add { text, file } => files::add(text, file),
+        Command::Open(name) => files::open(name),
         Command::Copy { from, to } => moving::copy(from, to),
         Command::Move { from, to } => moving::move_into(from, to),
         Command::Rename { from, to } => moving::rename(from, to),
         Command::Delete(name) => moving::delete(name),
+        Command::FindFile(name) => finding::find_file(name),
+        Command::FindText { text, place } => finding::find_text(text, place),
         Command::Clear => Ok(Reply::Show(CLEAR_SCREEN.to_string())),
         Command::Help(topic) => Ok(Reply::Show(help::text(topic.as_deref()))),
         Command::Bye => Ok(Reply::Show("Bye! See you next time.".to_string())),
     }
+}
+
+/// The folder that was named, or the current folder (".") if none was.
+fn here_or(folder: &Option<String>) -> &Path {
+    folder.as_deref().map_or(Path::new("."), Path::new)
 }

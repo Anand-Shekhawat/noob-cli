@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn understands_simple_phrases() {
         assert_eq!(parse("where am i"), Ok(Command::WhereAmI));
-        assert_eq!(parse("show files"), Ok(Command::ShowFiles));
+        assert_eq!(parse("show files"), Ok(Command::ShowFiles(None)));
         assert_eq!(parse("clear"), Ok(Command::Clear));
         assert_eq!(parse("help"), Ok(Command::Help(None)));
     }

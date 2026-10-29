@@ -55,7 +55,7 @@ fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Out
         print_error(&error.to_string());
         return Outcome::Failed;
     }
-    if let Some(question) = command.confirmation_question()
+    if let Some(question) = actions::question(&command)
         && !ask_yes(&question, &mut io::stdin().lock())
     {
         println!("Okay, I left everything as it was.");
