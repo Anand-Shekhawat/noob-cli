@@ -1,13 +1,13 @@
 # Noob CLI
 
-A beginner-friendly command line. Instead of remembering `mkdir`, `cp` or `mv`,
-you type plain English, and Noob shows you the real command it matches,
-so you learn the real ones as you go.
+A command line for beginners. Instead of remembering `mkdir`, `cp -R` or `grep -rni`,
+you type plain English. Noob does it safely, then shows you the real command it
+matches, so you learn the real ones as you go.
 
 ```
-noob> make folder photos
-✓ Made folder "photos"
-  (real command: mkdir -p photos)
+noob photos> copy cat.jpg to backup
+✓ Copied "cat.jpg" to "backup/cat.jpg"
+  (real command: cp cat.jpg backup)
 ```
 
 ## Try it
@@ -18,7 +18,11 @@ cargo run
 
 That opens the `noob>` prompt. Type `help` to see everything, or `bye` to leave.
 
-You can also run a single phrase:
+- **Tab** finishes what you're typing: commands first, then file names.
+- **Up arrow** brings back earlier commands, even after you close Noob.
+- **Ctrl+C** clears the line. **Ctrl+D** leaves.
+
+You can also run one phrase straight from your normal terminal:
 
 ```bash
 cargo run -- make folder photos
@@ -34,33 +38,81 @@ cargo install --path .
 
 | Type this | Real command |
 |---|---|
+| **Getting around** (inside the `noob>` prompt) | |
 | `where am i` | `pwd` |
-| `show files` | `ls` |
-| `make folder photos` (or `make dir`) | `mkdir -p photos` |
-| `make file notes.txt` | `touch notes.txt` |
+| `go into photos` (or `go to`) | `cd photos` |
+| `go back` (or `go up`) | `cd ..` |
+| `go home` | `cd ~` |
+| **Looking at things** | |
+| `show files` (or `show files photos`) | `ls` |
+| `show all files` (includes hidden ones) | `ls -a` |
+| `show details` (sizes, when things changed) | `ls -l` |
+| `show tree` | `ls -R` |
+| `show size photos` (or `how big is`) | `du -sh photos` |
 | `read notes.txt` | `cat notes.txt` |
-| `copy a.txt to b.txt` | `cp a.txt b.txt` |
+| **Making and changing** | |
+| `make folder photos` (or `make dir`, `new folder`) | `mkdir -p photos` |
+| `make file notes.txt` | `touch notes.txt` |
+| `write "hello" to notes.txt` | `echo hello > notes.txt` |
+| `add "buy milk" to list.txt` | `echo 'buy milk' >> list.txt` |
+| `open notes.txt` | `open notes.txt` |
+| **Copying, moving, deleting** | |
+| `copy a.txt to b.txt` (files or whole folders) | `cp a.txt b.txt` / `cp -R` |
 | `move a.txt into docs` | `mv a.txt docs` |
 | `rename old.txt to new.txt` | `mv old.txt new.txt` |
-| `delete notes.txt` | `rm notes.txt` |
-| `clear` | `clear` |
-| `help`, `bye` | |
+| `delete notes.txt` (or `remove`) | `rm notes.txt` |
+| **Finding** | |
+| `find file cat` | `find . -iname '*cat*'` |
+| `find "hello" in notes` | `grep -rni hello notes` |
+| **Other** | |
+| `clear`, `help`, `help copy`, `bye` | |
 
-Safety rules: Noob never overwrites an existing file, asks before deleting,
-and only deletes empty folders.
+Names with spaces work with or without quotes: `make folder my photos`.
+Use quotes when a name contains a joining word: `copy "notes to self.txt" to docs`.
+
+## Safety rules
+
+- **Delete sends things to the Trash**, so you can always get them back. Noob asks
+  first and tells you how much is inside a folder.
+- Noob won't delete the folder you're in, any folder holding it, your home folder,
+  or the whole disk.
+- Noob **never overwrites**: copy, move, rename and make refuse if the name is taken.
+  `write` asks before replacing text that's already in a file.
+- Shortcuts (symlinks) are never followed when copying, searching or deleting.
+
+## Privacy
+
+The commands you type in the `noob>` prompt are saved to `~/.noob_history` so the
+up arrow works next time, just like `~/.zsh_history`. Delete that file to clear it.
+
+Colours switch off automatically when the output isn't a terminal, or when the
+`NO_COLOR` environment variable is set.
 
 ## How the code is organised
 
 | File | Job |
 |---|---|
 | `src/main.rs` | Starts the program: one phrase, or the `noob>` prompt |
-| `src/repl.rs` | The `noob>` prompt loop |
-| `src/runner.rs` | Runs one line: understand, confirm, do it, print |
-| `src/parser.rs` | Turns your words into a `Command` |
+| `src/table.rs` | **The command table**: every phrase, example and help line, written once |
+| `src/parser.rs` | Turns your words (and "quoted names") into a `Command` |
 | `src/command.rs` | The list of commands, and their real terminal versions |
-| `src/actions.rs` | Does the work with files and folders |
-| `src/suggest.rs` | The "Did you mean...?" typo helper |
-| `src/help.rs` | The help text |
+| `src/runner.rs` | Runs one line: understand, check, ask, do it, print |
+| `src/repl.rs` | The `noob>` prompt, history and keys (uses `rustyline`) |
+| `src/completer.rs` | Tab completion |
+| `src/suggest.rs` | "Did you mean...?" |
+| `src/help.rs` | `help` and `help <command>`, built from the table |
+| `src/style.rs` | Colours |
+| `src/actions/` | The real work, one file per kind of job (files, listing, moving, finding...) |
+| `tests/cli.rs` | Tests that run the real `noob` program |
+
+### Adding a command
+
+1. Add a variant to `Command` in `src/command.rs`.
+2. Add an entry to `COMMANDS` in `src/table.rs` (phrases, example, summary).
+3. Run `cargo build`. The compiler points at every place that needs the new
+   command: its real command, and its action in `src/actions/mod.rs`.
+
+The table tests check that your example really runs your command.
 
 ## Checks
 
