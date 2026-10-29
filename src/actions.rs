@@ -21,6 +21,7 @@ pub enum ActionError {
     NotText(String),
     NotAllowed(String),
     IntoItself(String),
+    NotAFolder(String),
     CantDelete(String),
     Other(String),
 }
@@ -63,6 +64,9 @@ impl fmt::Display for ActionError {
                     f,
                     "Your computer won't let me touch \"{name}\" (permission denied)."
                 )
+            }
+            ActionError::NotAFolder(name) => {
+                write!(f, "\"{name}\" is a file, not a folder.")
             }
             ActionError::IntoItself(name) => {
                 write!(f, "I can't put \"{name}\" inside itself.")
@@ -114,6 +118,9 @@ pub fn check_ready(command: &Command) -> Result<(), ActionError> {
 pub fn execute(command: &Command) -> Result<String, ActionError> {
     match command {
         Command::WhereAmI => where_am_i(),
+        Command::GoInto(name) => go_into(name),
+        Command::GoBack => go_back(),
+        Command::GoHome => go_home(),
         Command::ShowFiles => show_files(Path::new(".")),
         Command::MakeFolder(name) => make_folder(name),
         Command::MakeFile(name) => make_file(name),
@@ -131,6 +138,53 @@ pub fn execute(command: &Command) -> Result<String, ActionError> {
 fn where_am_i() -> Result<String, ActionError> {
     let here = std::env::current_dir().map_err(|error| friendly(error, "."))?;
     Ok(format!("You are in {}", here.display()))
+}
+
+fn go_into(name: &str) -> Result<String, ActionError> {
+    let path = existing(name)?;
+    if !path.is_dir() {
+        return Err(ActionError::NotAFolder(name.to_string()));
+    }
+    std::env::set_current_dir(path).map_err(|error| friendly(error, name))?;
+    you_are_now_in()
+}
+
+fn go_back() -> Result<String, ActionError> {
+    let here = current_folder()?;
+    let Some(parent) = here.parent() else {
+        return Ok("You're already at the very top folder.".to_string());
+    };
+    std::env::set_current_dir(parent).map_err(|error| friendly(error, ".."))?;
+    you_are_now_in()
+}
+
+fn go_home() -> Result<String, ActionError> {
+    let home = std::env::home_dir()
+        .ok_or_else(|| ActionError::Other("I couldn't find your home folder.".to_string()))?;
+    std::env::set_current_dir(&home).map_err(|error| friendly(error, "~"))?;
+    you_are_now_in()
+}
+
+fn current_folder() -> Result<PathBuf, ActionError> {
+    std::env::current_dir().map_err(|error| friendly(error, "."))
+}
+
+fn you_are_now_in() -> Result<String, ActionError> {
+    Ok(format!("✓ You are now in {}", short(&current_folder()?)))
+}
+
+/// Shows a folder the way people say it: your home folder is written as `~`.
+pub fn short(path: &Path) -> String {
+    short_with_home(path, std::env::home_dir().as_deref())
+}
+
+fn short_with_home(path: &Path, home: Option<&Path>) -> String {
+    // `strip_prefix` compares whole folder names, so "/Users/samantha" doesn't match "/Users/sam".
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
 }
 
 fn show_files(folder: &Path) -> Result<String, ActionError> {
@@ -333,6 +387,42 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn shows_the_home_folder_as_a_squiggle() {
+        let home = Path::new("/Users/sam");
+        assert_eq!(
+            short_with_home(Path::new("/Users/sam/photos"), Some(home)),
+            "~/photos"
+        );
+        assert_eq!(short_with_home(home, Some(home)), "~");
+        assert_eq!(short_with_home(Path::new("/tmp"), Some(home)), "/tmp");
+        assert_eq!(
+            short_with_home(Path::new("/Users/samantha"), Some(home)),
+            "/Users/samantha"
+        );
+    }
+
+    #[test]
+    fn will_only_go_into_folders_that_exist() {
+        let test = TestFolder::new("go-into");
+        fs::write(test.at("a.txt"), "").unwrap();
+        let before = std::env::current_dir().unwrap();
+
+        assert!(matches!(
+            go_into(&test.at("nope")),
+            Err(ActionError::NotFound(_))
+        ));
+        assert!(matches!(
+            go_into(&test.at("a.txt")),
+            Err(ActionError::NotAFolder(_))
+        ));
+        assert_eq!(
+            std::env::current_dir().unwrap(),
+            before,
+            "a failed go stays put"
+        );
     }
 
     #[cfg(unix)]

@@ -318,6 +318,18 @@ mod tests {
     }
 
     #[test]
+    fn understands_going_places() {
+        assert_eq!(parse("go into photos"), Ok(Command::GoInto(name("photos"))));
+        assert_eq!(
+            parse("go to my photos"),
+            Ok(Command::GoInto(name("my photos")))
+        );
+        assert_eq!(parse("go back"), Ok(Command::GoBack));
+        assert_eq!(parse("go up"), Ok(Command::GoBack));
+        assert_eq!(parse("go home"), Ok(Command::GoHome));
+    }
+
+    #[test]
     fn empty_input_is_reported() {
         assert_eq!(parse(""), Err(ParseError::Empty));
         assert_eq!(parse("    "), Err(ParseError::Empty));

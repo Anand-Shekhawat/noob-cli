@@ -15,7 +15,7 @@ pub enum Outcome {
 
 /// Runs one line typed at the `noob>` prompt.
 pub fn run_line(input: &str) -> Outcome {
-    run(parser::parse(input), input.trim())
+    run(parser::parse(input), input.trim(), true)
 }
 
 /// Runs the words typed after `noob` in the normal terminal.
@@ -29,10 +29,10 @@ pub fn run_words(words: &[String]) -> Outcome {
             quoted: word.is_empty() || word.contains(char::is_whitespace),
         })
         .collect();
-    run(parser::parse_tokens(&tokens), &words.join(" "))
+    run(parser::parse_tokens(&tokens), &words.join(" "), false)
 }
 
-fn run(parsed: Result<Command, ParseError>, typed: &str) -> Outcome {
+fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Outcome {
     let command = match parsed {
         Ok(command) => command,
         Err(ParseError::Empty) => return Outcome::Done, // pressing Enter on nothing is fine
@@ -42,6 +42,13 @@ fn run(parsed: Result<Command, ParseError>, typed: &str) -> Outcome {
         }
     };
 
+    if command.prompt_only() && !in_prompt {
+        eprintln!(
+            "? Moving around only works inside the noob prompt. \
+             Type noob on its own to open it, then try: {typed}"
+        );
+        return Outcome::Failed;
+    }
     if let Err(error) = actions::check_ready(&command) {
         eprintln!("✗ {error}");
         return Outcome::Failed;

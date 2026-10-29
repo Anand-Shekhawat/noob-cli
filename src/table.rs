@@ -94,6 +94,30 @@ pub static COMMANDS: &[Spec] = &[
         group: Group::GettingAround,
         build: |_| Command::WhereAmI,
     },
+    Spec {
+        phrases: &["go into", "go to"],
+        shape: Shape::One,
+        example: "go into photos",
+        summary: "go inside a folder (in the noob> prompt)",
+        group: Group::GettingAround,
+        build: |names| Command::GoInto(one(names)),
+    },
+    Spec {
+        phrases: &["go back", "go up"],
+        shape: Shape::Nothing,
+        example: "go back",
+        summary: "go up to the folder this one is in",
+        group: Group::GettingAround,
+        build: |_| Command::GoBack,
+    },
+    Spec {
+        phrases: &["go home"],
+        shape: Shape::Nothing,
+        example: "go home",
+        summary: "go to your home folder (~)",
+        group: Group::GettingAround,
+        build: |_| Command::GoHome,
+    },
     // Looking at things
     Spec {
         phrases: &["show files", "list files"],

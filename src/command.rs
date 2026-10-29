@@ -6,6 +6,9 @@
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Command {
     WhereAmI,
+    GoInto(String),
+    GoBack,
+    GoHome,
     ShowFiles,
     MakeFolder(String),
     MakeFile(String),
@@ -34,6 +37,9 @@ impl Command {
     pub fn real_command(&self) -> Option<String> {
         let text = match self {
             Command::WhereAmI => "pwd".to_string(),
+            Command::GoInto(name) => format!("cd {}", quote(name)),
+            Command::GoBack => "cd ..".to_string(),
+            Command::GoHome => "cd ~".to_string(),
             Command::ShowFiles => "ls".to_string(),
             Command::MakeFolder(name) => format!("mkdir -p {}", quote(name)),
             Command::MakeFile(name) => format!("touch {}", quote(name)),
@@ -47,6 +53,12 @@ impl Command {
             Command::Help(_) | Command::Bye => return None,
         };
         Some(text)
+    }
+
+    /// Moving around only works inside the `noob>` prompt. In the normal terminal,
+    /// Noob is a separate program, and a program can't move the terminal that started it.
+    pub fn prompt_only(&self) -> bool {
+        matches!(self, Command::GoInto(_) | Command::GoBack | Command::GoHome)
     }
 
     /// Risky commands return a question that must be answered "yes" before they run.
@@ -96,6 +108,14 @@ mod tests {
         );
         assert!(real("a$b").starts_with("rm 'a$b'"));
         assert!(real("it's").starts_with(r"rm 'it'\''s'"));
+    }
+
+    #[test]
+    fn going_places_only_works_in_the_prompt() {
+        assert!(Command::GoBack.prompt_only());
+        assert!(Command::GoInto("photos".to_string()).prompt_only());
+        assert!(!Command::ShowFiles.prompt_only());
+        assert_eq!(Command::GoHome.real_command(), Some("cd ~".to_string()));
     }
 
     #[test]
