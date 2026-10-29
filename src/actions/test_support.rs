@@ -38,3 +38,16 @@ impl Drop for TestFolder {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+/// Makes a "named pipe": a special file that waits forever for someone to write into it.
+/// Programs that read it without checking first get stuck.
+#[cfg(unix)]
+pub fn make_pipe(test: &TestFolder, name: &str) -> String {
+    let path = test.at(name);
+    let made = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "mkfifo failed");
+    path
+}

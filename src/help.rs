@@ -6,17 +6,8 @@ use crate::table::{self, COMMANDS, Group};
 /// Width of the example column, so the summaries line up.
 const EXAMPLE_WIDTH: usize = 30;
 
-/// `help` on its own, or `help copy` for one command.
-pub fn text(topic: Option<&str>) -> String {
-    match topic {
-        None => everything(),
-        Some(topic) => about(topic).unwrap_or_else(|| {
-            format!("I don't have help for \"{topic}\". Type help to see everything.")
-        }),
-    }
-}
-
-fn everything() -> String {
+/// The whole list, grouped.
+pub fn everything() -> String {
     let mut lines = vec!["Here's everything Noob understands:".to_string()];
     for group in Group::ALL {
         lines.push(String::new());
@@ -34,7 +25,8 @@ fn everything() -> String {
     lines.join("\n")
 }
 
-fn about(topic: &str) -> Option<String> {
+/// More about one command, like `help copy`. `None` if there's no such command.
+pub fn about(topic: &str) -> Option<String> {
     let spec = table::find(topic)?;
     let mut lines = vec![
         format!("{}: {}", spec.main_phrase(), spec.summary),
@@ -61,7 +53,7 @@ mod tests {
 
     #[test]
     fn lists_every_command_under_its_group() {
-        let help = text(None);
+        let help = everything();
         for spec in COMMANDS {
             assert!(help.contains(spec.example), "{} is missing", spec.example);
         }
@@ -72,7 +64,7 @@ mod tests {
 
     #[test]
     fn explains_one_command_with_its_real_command_and_other_names() {
-        let help = text(Some("make dir"));
+        let help = about("make dir").unwrap();
         assert!(help.starts_with("make folder: make a new folder"));
         assert!(help.contains("Real command:  mkdir -p photos"));
         assert!(help.contains("Also works:    make dir, new folder, create folder"));
@@ -80,6 +72,6 @@ mod tests {
 
     #[test]
     fn says_so_when_there_is_no_help_for_a_topic() {
-        assert!(text(Some("banana")).contains("I don't have help for \"banana\""));
+        assert!(about("banana").is_none());
     }
 }

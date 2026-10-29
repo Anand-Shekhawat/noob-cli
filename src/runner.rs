@@ -30,7 +30,16 @@ pub fn run_words(words: &[String]) -> Outcome {
             quoted: word.is_empty() || word.contains(char::is_whitespace),
         })
         .collect();
-    run(parser::parse_tokens(&tokens), &words.join(" "), false)
+    let typed = words.join(" ");
+    // `noob "make folder" photos` puts the phrase itself in quotes. If that isn't
+    // understood, try once more, reading every word as if it was typed in the prompt.
+    let parsed = match parser::parse_tokens(&tokens) {
+        Err(ParseError::Unknown { suggestion }) => {
+            parser::parse(&typed).map_err(|_| ParseError::Unknown { suggestion })
+        }
+        other => other,
+    };
+    run(parsed, &typed, false)
 }
 
 fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Outcome {
@@ -115,7 +124,7 @@ fn explain(error: &ParseError, input: &str) -> String {
 fn ask_yes(question: &str, input: &mut impl BufRead) -> bool {
     println!(
         "{}",
-        style::warning(&format!("⚠ {question} Type yes to continue:"))
+        style::question(&format!("⚠ {question} Type yes to continue:"))
     );
     let mut answer = String::new();
     match input.read_line(&mut answer) {

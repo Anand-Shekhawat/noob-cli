@@ -151,6 +151,27 @@ mod tests {
     }
 
     #[test]
+    fn completes_file_names_inside_a_folder() {
+        let folder = std::env::temp_dir().join(format!("noob-complete-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("photos")).unwrap();
+        fs::write(folder.join("notes.txt"), "").unwrap();
+        fs::write(folder.join("my notes.txt"), "").unwrap();
+        fs::write(folder.join(".hidden"), "").unwrap();
+
+        let typed = format!("read {}/", folder.display());
+        let (start, choices) = complete_name(&typed);
+        assert_eq!(start, "read ".len());
+        let shown: Vec<&str> = choices.iter().map(|pair| pair.display.as_str()).collect();
+        assert_eq!(
+            shown,
+            vec!["my notes.txt", "notes.txt", "photos/"],
+            "hidden files stay hidden"
+        );
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
     fn quotes_names_that_have_spaces() {
         assert_eq!(
             choice("", "notes.txt", false, false).replacement,

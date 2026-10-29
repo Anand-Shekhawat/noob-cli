@@ -200,3 +200,19 @@ fn finds_text_and_names_from_the_normal_terminal() {
     let by_text = text(&playground.run(&["find", "sam", "in", "notes"]).stdout);
     assert!(by_text.contains("notes/todo.txt:2  call Sam"), "{by_text}");
 }
+
+#[test]
+fn a_quoted_phrase_from_the_normal_terminal_still_works() {
+    let playground = Playground::new("quoted-phrase");
+    let output = playground.run(&["make folder", "photos"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(playground.work().join("photos").is_dir());
+}
+
+#[test]
+fn help_for_something_unknown_fails_so_scripts_can_tell() {
+    let playground = Playground::new("help-unknown");
+    let output = playground.run(&["help", "banana"]);
+    assert!(!output.status.success());
+    assert!(text(&output.stderr).contains("I don't have help for \"banana\""));
+}

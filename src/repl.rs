@@ -79,7 +79,7 @@ fn prompt_loop(editor: &mut NoobEditor) -> ExitCode {
         // rustyline takes the plain prompt (to measure it) and the coloured one (to show it).
         match editor.readline(&(plain.as_str(), coloured.as_str())) {
             Ok(line) => {
-                if !line.trim().is_empty()
+                if should_remember(&line)
                     && let Err(error) = editor.add_history_entry(line.as_str())
                 {
                     eprintln!("⚠ I couldn't remember that command: {error}");
@@ -120,4 +120,23 @@ fn prompt_label(folder: &Path) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or(short)
+}
+
+/// Blank lines aren't saved. Neither are lines that start with a space: like in a real
+/// terminal, that's how you keep something private (say, a password you `write`) out of
+/// the history file.
+fn should_remember(line: &str) -> bool {
+    !line.trim().is_empty() && !line.starts_with(' ')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_leading_space_keeps_a_line_out_of_history() {
+        assert!(should_remember("show files"));
+        assert!(!should_remember(" write \"secret\" to notes.txt"));
+        assert!(!should_remember("   "));
+    }
 }

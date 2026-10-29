@@ -7,7 +7,7 @@ use std::process;
 
 use super::Reply;
 use super::errors::{ActionError, friendly};
-use super::paths::{existing, folder_of, taken};
+use super::paths::{existing, folder_of, is_shortcut, taken};
 use super::words::{human_size, plural};
 
 /// `read` refuses files bigger than this; they're better opened in an app.
@@ -25,6 +25,7 @@ pub(super) fn make_folder(name: &str) -> Result<Reply, ActionError> {
 }
 
 pub(super) fn make_file(name: &str) -> Result<Reply, ActionError> {
+    check_folder_exists(Path::new(name))?;
     // `create_new` refuses to touch a file that already exists, so nothing gets wiped.
     fs::OpenOptions::new()
         .write(true)
@@ -36,16 +37,19 @@ pub(super) fn make_file(name: &str) -> Result<Reply, ActionError> {
 
 pub(super) fn read(name: &str) -> Result<Reply, ActionError> {
     let path = existing(name)?;
-    if path.is_dir() {
+    // `metadata` follows a shortcut to the real file, which is fine for just reading.
+    let info = fs::metadata(path).map_err(|error| friendly(error, name))?;
+    if info.is_dir() {
         return Err(ActionError::IsAFolder(name.to_string()));
     }
-    let size = fs::metadata(path)
-        .map_err(|error| friendly(error, name))?
-        .len();
-    if size > MAX_READ_BYTES {
-        return Err(ActionError::Other(format!(
+    if !info.is_file() {
+        // Devices like /dev/zero never end, and pipes can wait forever.
+        return Err(ActionError::NotAFile(name.to_string()));
+    }
+    if info.len() > MAX_READ_BYTES {
+        return Err(ActionError::Explained(format!(
             "\"{name}\" is very big ({}). Try: open {name}",
-            human_size(size)
+            human_size(info.len())
         )));
     }
     let text = fs::read_to_string(path).map_err(|error| friendly(error, name))?;
@@ -66,7 +70,7 @@ pub(super) fn read(name: &str) -> Result<Reply, ActionError> {
 
 /// The question to ask before `write` replaces text that's already there.
 pub(super) fn replace_question(file: &str) -> Option<String> {
-    let has_text = fs::metadata(file).is_ok_and(|info| info.is_file() && info.len() > 0);
+    let has_text = fs::symlink_metadata(file).is_ok_and(|info| info.is_file() && info.len() > 0);
     has_text.then(|| format!("\"{file}\" already has text in it. Replace all of it?"))
 }
 
@@ -99,17 +103,30 @@ pub(super) fn add(text: &str, file: &str) -> Result<Reply, ActionError> {
     Ok(Reply::Done(message))
 }
 
-/// Writing needs a file (not a folder) in a folder that exists.
+/// Writing needs a normal file (or nothing yet) in a folder that exists.
 fn check_writable(file: &str) -> Result<(), ActionError> {
     let path = Path::new(file);
-    if path.is_dir() {
-        return Err(ActionError::IsAFolder(file.to_string()));
+    if is_shortcut(path) {
+        return Err(ActionError::Shortcut(file.to_string()));
     }
+    if let Ok(info) = fs::symlink_metadata(path) {
+        if info.is_dir() {
+            return Err(ActionError::IsAFolder(file.to_string()));
+        }
+        if !info.is_file() {
+            return Err(ActionError::NotAFile(file.to_string()));
+        }
+    }
+    check_folder_exists(path)
+}
+
+fn check_folder_exists(path: &Path) -> Result<(), ActionError> {
     let folder = folder_of(path);
-    if !folder.is_dir() {
-        return Err(ActionError::NotFound(folder.display().to_string()));
+    if folder.is_dir() {
+        Ok(())
+    } else {
+        Err(ActionError::NotFound(folder.display().to_string()))
     }
-    Ok(())
 }
 
 fn ends_with_new_line(file: &str) -> Result<bool, ActionError> {
@@ -143,9 +160,11 @@ pub(super) fn open(name: &str) -> Result<Reply, ActionError> {
     let status = process::Command::new(program)
         .arg(&path)
         .status()
-        .map_err(|error| ActionError::Other(format!("I couldn't start {program}: {error}")))?;
-    if !status.success() {
-        return Err(ActionError::Other(format!(
+        .map_err(|error| ActionError::Explained(format!("I couldn't start {program}: {error}")))?;
+    // Windows' explorer often reports "failed" even when it opened the file, so only
+    // trust the answer on other computers.
+    if !status.success() && !cfg!(windows) {
+        return Err(ActionError::Explained(format!(
             "{program} couldn't open \"{name}\"."
         )));
     }
@@ -155,7 +174,7 @@ pub(super) fn open(name: &str) -> Result<Reply, ActionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::test_support::TestFolder;
+    use crate::actions::test_support::{TestFolder, make_pipe};
 
     #[test]
     fn makes_nested_folders() {
@@ -185,6 +204,13 @@ mod tests {
             Err(ActionError::AlreadyExists(_))
         ));
         assert_eq!(fs::read_to_string(&notes).unwrap(), "keep me");
+    }
+
+    #[test]
+    fn a_file_in_a_missing_folder_blames_the_folder() {
+        let test = TestFolder::new("make-file-lost");
+        let result = make_file(&test.at("nope/notes.txt"));
+        assert!(matches!(result, Err(ActionError::NotFound(name)) if name == test.at("nope")));
     }
 
     #[test]
@@ -228,6 +254,15 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn will_not_read_or_write_pipes_that_could_wait_forever() {
+        let test = TestFolder::new("read-pipe");
+        let pipe = make_pipe(&test, "pipe");
+        assert!(matches!(read(&pipe), Err(ActionError::NotAFile(_))));
+        assert!(matches!(add("hi", &pipe), Err(ActionError::NotAFile(_))));
+    }
+
     #[test]
     fn write_replaces_the_text_and_asks_first_only_if_there_was_some() {
         let test = TestFolder::new("write");
@@ -252,6 +287,29 @@ mod tests {
         let new = test.at("new.txt");
         assert!(matches!(add("hi", &new), Ok(Reply::Done(message)) if message.starts_with("Made")));
         assert_eq!(fs::read_to_string(&new).unwrap(), "hi\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn will_not_write_through_shortcuts() {
+        let test = TestFolder::new("write-link");
+        fs::write(test.at("real.txt"), "keep").unwrap();
+        std::os::unix::fs::symlink(test.at("real.txt"), test.at("link")).unwrap();
+        std::os::unix::fs::symlink(test.at("nowhere.txt"), test.at("broken")).unwrap();
+
+        assert!(matches!(
+            write("x", &test.at("link")),
+            Err(ActionError::Shortcut(_))
+        ));
+        assert!(matches!(
+            add("x", &test.at("broken")),
+            Err(ActionError::Shortcut(_))
+        ));
+        assert_eq!(fs::read_to_string(test.at("real.txt")).unwrap(), "keep");
+        assert!(
+            !Path::new(&test.at("nowhere.txt")).exists(),
+            "no surprise file was made"
+        );
     }
 
     #[test]

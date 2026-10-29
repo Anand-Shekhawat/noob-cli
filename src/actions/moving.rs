@@ -6,38 +6,71 @@ use std::path::Path;
 
 use super::Reply;
 use super::errors::{ActionError, friendly};
-use super::paths::{check_free, existing, free_destination, is_inside};
+use super::paths::{check_free, existing, free_destination, is_inside, is_shortcut, same_thing};
 use super::words::plural;
 
 pub(super) fn copy(from: &str, to: &str) -> Result<Reply, ActionError> {
     let source = existing(from)?;
     let target = free_destination(source, to)?;
-    if !source.is_dir() {
+    // `symlink_metadata` describes a shortcut itself, not the thing it points to.
+    let info = fs::symlink_metadata(source).map_err(|error| friendly(error, from))?;
+    if info.file_type().is_symlink() {
+        copy_shortcut(source, &target).map_err(|error| friendly(error, to))?;
+        return Ok(Reply::Done(format!(
+            "Copied the shortcut \"{from}\" to \"{}\"",
+            target.display()
+        )));
+    }
+    if info.is_file() {
         fs::copy(source, &target).map_err(|error| friendly(error, to))?;
         return Ok(Reply::Done(format!(
             "Copied \"{from}\" to \"{}\"",
             target.display()
         )));
     }
+    if !info.is_dir() {
+        return Err(ActionError::NotAFile(from.to_string()));
+    }
     if is_inside(&target, source) {
         return Err(ActionError::IntoItself(from.to_string()));
     }
-    let copied = copy_folder(source, &target)?;
+    let mut tally = Tally::default();
+    copy_folder(source, &target, &mut tally).map_err(|error| {
+        // Be honest: some files may already be in the copy.
+        ActionError::Explained(format!(
+            "I stopped partway, so \"{}\" only has some of the files ({}). The problem: {error}",
+            target.display(),
+            plural(tally.files, "file")
+        ))
+    })?;
+    let skipped = match tally.skipped {
+        0 => String::new(),
+        count => format!(
+            " I skipped {} that aren't normal files.",
+            plural(count, "special item")
+        ),
+    };
     Ok(Reply::Done(format!(
-        "Copied the folder \"{from}\" ({}) to \"{}\"",
-        plural(copied, "file"),
+        "Copied the folder \"{from}\" ({}) to \"{}\".{skipped}",
+        plural(tally.files, "file"),
         target.display()
     )))
 }
 
+/// What a folder copy has done so far.
+#[derive(Default)]
+struct Tally {
+    files: u64,
+    skipped: u64,
+}
+
 /// Copies a folder and everything inside it. Calls itself for each folder inside:
-/// that's called "recursion". Returns how many files were copied.
-fn copy_folder(source: &Path, target: &Path) -> Result<u64, ActionError> {
+/// that's called "recursion".
+fn copy_folder(source: &Path, target: &Path, tally: &mut Tally) -> Result<(), ActionError> {
     let target_label = target.display().to_string();
     let source_label = source.display().to_string();
     fs::create_dir(target).map_err(|error| friendly(error, &target_label))?;
 
-    let mut copied = 0;
     let entries = fs::read_dir(source).map_err(|error| friendly(error, &source_label))?;
     for entry in entries {
         let entry = entry.map_err(|error| friendly(error, &source_label))?;
@@ -45,15 +78,18 @@ fn copy_folder(source: &Path, target: &Path) -> Result<u64, ActionError> {
         let label = from.display().to_string();
         let kind = entry.file_type().map_err(|error| friendly(error, &label))?;
         if kind.is_dir() {
-            copied += copy_folder(&from, &to)?;
+            copy_folder(&from, &to, tally)?;
         } else if kind.is_symlink() {
             copy_shortcut(&from, &to).map_err(|error| friendly(error, &label))?;
-        } else {
+        } else if kind.is_file() {
             fs::copy(&from, &to).map_err(|error| friendly(error, &label))?;
-            copied += 1;
+            tally.files += 1;
+        } else {
+            // Pipes and devices aren't real files; copying one could wait forever.
+            tally.skipped += 1;
         }
     }
-    Ok(copied)
+    Ok(())
 }
 
 /// A shortcut is copied as a shortcut, never as the thing it points to.
@@ -80,7 +116,10 @@ pub(super) fn move_into(from: &str, to: &str) -> Result<Reply, ActionError> {
 pub(super) fn rename(from: &str, to: &str) -> Result<Reply, ActionError> {
     let source = existing(from)?;
     let target = Path::new(to);
-    check_free(target)?;
+    // "rename notes.txt to Notes.txt" on a Mac: both names are the same file, so it's fine.
+    if !same_thing(source, target) {
+        check_free(target)?;
+    }
     relocate(source, target)?;
     Ok(Reply::Done(format!("Renamed \"{from}\" to \"{to}\"")))
 }
@@ -102,6 +141,12 @@ pub(super) fn check_delete(name: &str) -> Result<(), ActionError> {
         return Err(ActionError::CantDelete(name.to_string()));
     }
     fs::symlink_metadata(path).map_err(|error| friendly(error, name))?;
+    // Deleting a shortcut only removes the shortcut, never what it points to, so it's safe.
+    if is_shortcut(path) {
+        return Ok(());
+    }
+    // If a full path can't be worked out, there's nothing to compare, and the checks
+    // above have already made sure the thing exists and isn't ".", ".." or "/".
     let here = env::current_dir().ok();
     let home = env::home_dir().and_then(|home| fs::canonicalize(home).ok());
     if let Ok(full) = fs::canonicalize(path)
@@ -146,8 +191,8 @@ pub(super) fn delete(name: &str) -> Result<Reply, ActionError> {
 #[cfg(not(test))]
 fn send_to_trash(path: &Path) -> Result<(), ActionError> {
     trash_bin().delete(path).map_err(|error| {
-        ActionError::Other(format!(
-            "I couldn't move it to the Trash, so nothing was deleted ({error})."
+        ActionError::Explained(format!(
+            "I couldn't move it to the Trash, so nothing was deleted. ({error})"
         ))
     })
 }
@@ -168,6 +213,7 @@ fn trash_bin() -> trash::TrashContext {
 }
 
 /// Tests must not fill your real Trash with test files, so they use this stand-in.
+/// (The real Trash is checked by hand, and the stand-in keeps every other step tested.)
 #[cfg(test)]
 fn send_to_trash(path: &Path) -> Result<(), ActionError> {
     let label = path.display().to_string();
@@ -368,5 +414,72 @@ mod tests {
 
         assert!(!Path::new(&test.at("a.txt")).exists());
         assert!(!Path::new(&test.at("photos")).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_folder_copy_says_it_stopped_partway() {
+        use std::os::unix::fs::PermissionsExt;
+        let test = TestFolder::new("copy-partway");
+        fs::create_dir(test.at("photos")).unwrap();
+        fs::write(test.at("photos/locked.jpg"), "secret").unwrap();
+        fs::set_permissions(
+            test.at("photos/locked.jpg"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+
+        let result = copy(&test.at("photos"), &test.at("backup"));
+        assert!(
+            matches!(&result, Err(ActionError::Explained(message)) if message.contains("stopped partway")),
+            "{result:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_copies_skip_pipes_instead_of_getting_stuck() {
+        let test = TestFolder::new("copy-pipe");
+        fs::create_dir(test.at("box")).unwrap();
+        fs::write(test.at("box/a.txt"), "hi").unwrap();
+        crate::actions::test_support::make_pipe(&test, "box/pipe");
+
+        let reply = copy(&test.at("box"), &test.at("copy")).unwrap();
+        assert!(
+            matches!(reply, Reply::Done(message) if message.contains("skipped 1 special item"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copying_a_shortcut_copies_the_shortcut() {
+        let test = TestFolder::new("copy-link");
+        fs::write(test.at("real.txt"), "hi").unwrap();
+        std::os::unix::fs::symlink(test.at("real.txt"), test.at("link")).unwrap();
+
+        copy(&test.at("link"), &test.at("link2")).unwrap();
+        assert!(
+            fs::symlink_metadata(test.at("link2"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn renaming_only_the_capital_letters_works() {
+        let test = TestFolder::new("rename-case");
+        fs::write(test.at("notes.txt"), "hi").unwrap();
+        rename(&test.at("notes.txt"), &test.at("Notes.txt")).unwrap();
+        assert_eq!(fs::read_to_string(test.at("Notes.txt")).unwrap(), "hi");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shortcut_to_a_precious_folder_can_still_be_deleted() {
+        let test = TestFolder::new("delete-link-home");
+        let here = std::env::current_dir().unwrap();
+        std::os::unix::fs::symlink(&here, test.at("link-to-here")).unwrap();
+        assert!(check_delete(&test.at("link-to-here")).is_ok());
     }
 }

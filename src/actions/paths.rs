@@ -79,6 +79,28 @@ fn short_with_home(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
+/// True if `path` is a shortcut (symlink), even a broken one.
+pub(super) fn is_shortcut(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|info| info.file_type().is_symlink())
+}
+
+/// True if two names point at the very same file. On a Mac, "a.txt" and "A.TXT"
+/// usually do, because Mac disks ignore capital letters in names.
+#[cfg(unix)]
+pub(super) fn same_thing(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+        // A file's "inode" number on its "device" is its true identity, whatever its name.
+        (Ok(a), Ok(b)) => a.ino() == b.ino() && a.dev() == b.dev(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+pub(super) fn same_thing(_a: &Path, _b: &Path) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

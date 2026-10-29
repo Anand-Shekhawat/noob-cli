@@ -47,7 +47,11 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
             letters.next();
         } else if letter == '"' {
             letters.next(); // skip the opening quote
-            tokens.push(read_quoted(&mut letters)?);
+            let mut token = read_quoted(&mut letters)?;
+            // Letters right after the closing quote belong to the same name, like in a
+            // real terminal: "my photos"2 is "my photos2".
+            token.text.push_str(&read_word(&mut letters).text);
+            tokens.push(token);
         } else {
             tokens.push(read_word(&mut letters));
         }
@@ -137,7 +141,9 @@ fn names_for(spec: &Spec, rest: &[Token]) -> Result<Vec<String>, ParseError> {
         Shape::Two { joiners } => {
             let joiner_at = rest
                 .iter()
-                .position(|token| {
+                // The LAST joining word counts, so `write go to the shop to list.txt`
+                // writes "go to the shop". Names after the joiner rarely contain it.
+                .rposition(|token| {
                     token
                         .keyword()
                         .is_some_and(|word| joiners.contains(&word.as_str()))
@@ -270,6 +276,28 @@ mod tests {
             to: name("docs"),
         };
         assert_eq!(parse(r#"copy "notes to self.txt" to docs"#), Ok(expected));
+    }
+
+    #[test]
+    fn text_can_contain_the_joining_word_because_the_last_one_counts() {
+        let write = Command::Write {
+            text: name("go to the shop"),
+            file: name("list.txt"),
+        };
+        assert_eq!(parse("write go to the shop to list.txt"), Ok(write));
+        let copy = Command::Copy {
+            from: name("notes to self.txt"),
+            to: name("docs"),
+        };
+        assert_eq!(parse("copy notes to self.txt to docs"), Ok(copy));
+    }
+
+    #[test]
+    fn a_quote_glued_to_a_word_makes_one_name() {
+        assert_eq!(
+            tokenize(r#""my photos"2"#).unwrap(),
+            vec![quoted("my photos2")]
+        );
     }
 
     #[test]

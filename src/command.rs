@@ -76,8 +76,8 @@ impl Command {
             Command::Read(name) => format!("cat {}", quote(name)),
             Command::MakeFolder(name) => format!("mkdir -p {}", quote(name)),
             Command::MakeFile(name) => format!("touch {}", quote(name)),
-            Command::Write { text, file } => format!("echo {} > {}", quote(text), quote(file)),
-            Command::Add { text, file } => format!("echo {} >> {}", quote(text), quote(file)),
+            Command::Write { text, file } => format!("{} > {}", echo(text), quote(file)),
+            Command::Add { text, file } => format!("{} >> {}", echo(text), quote(file)),
             Command::Open(name) => format!("{} {}", opener(), quote(name)),
             Command::Copy { from, to } => {
                 let copy = if Path::new(from).is_dir() {
@@ -102,8 +102,9 @@ impl Command {
                 )
             }
             Command::FindFile(name) => format!("find . -iname {}", quote(&format!("*{name}*"))),
+            // `-e` tells grep "the next word is what to look for", even if it starts with "-".
             Command::FindText { text, place } => {
-                format!("grep -rni {} {}", quote(text), quote(place))
+                format!("grep -rni -e {} {}", quote_text(text), quote(place))
             }
             Command::Clear => "clear".to_string(),
             Command::Help(_) | Command::Bye => return None,
@@ -134,6 +135,29 @@ fn with_folder(command: &str, folder: &Option<String>) -> String {
     match folder {
         Some(folder) => format!("{command} {}", quote(folder)),
         None => command.to_string(),
+    }
+}
+
+/// `echo` prints text. Text starting with "-" would look like an option to echo,
+/// so then the real command uses `printf`, which never mixes them up.
+fn echo(text: &str) -> String {
+    if text.starts_with('-') {
+        format!("printf '%s\\n' {}", quote_text(text))
+    } else {
+        format!("echo {}", quote_text(text))
+    }
+}
+
+/// Makes text (not a file name) safe to paste: quoted if needed, but never given "./".
+fn quote_text(text: &str) -> String {
+    let plain = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c));
+    if plain {
+        text.to_string()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
     }
 }
 
@@ -200,6 +224,20 @@ mod tests {
             file: "list.txt".to_string(),
         };
         assert_eq!(real(add), "echo 'buy milk' >> list.txt");
+    }
+
+    #[test]
+    fn text_starting_with_a_dash_is_never_mistaken_for_an_option() {
+        let write = Command::Write {
+            text: "-n".to_string(),
+            file: "a.txt".to_string(),
+        };
+        assert_eq!(write.real_command().unwrap(), "printf '%s\\n' -n > a.txt");
+        let find = Command::FindText {
+            text: "-n".to_string(),
+            place: "docs".to_string(),
+        };
+        assert_eq!(find.real_command().unwrap(), "grep -rni -e -n docs");
     }
 
     #[test]

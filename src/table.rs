@@ -86,6 +86,44 @@ fn two(names: Vec<String>) -> (String, String) {
     (first, second)
 }
 
+/// "~" means your home folder, like in a real terminal: "~/photos" is the photos folder in it.
+fn expand_home(name: String) -> String {
+    expand_home_with(name, std::env::home_dir().as_deref())
+}
+
+fn expand_home_with(name: String, home: Option<&std::path::Path>) -> String {
+    let Some(home) = home else {
+        return name;
+    };
+    if name == "~" {
+        return home.display().to_string();
+    }
+    match name.strip_prefix("~/") {
+        Some(rest) => home.join(rest).display().to_string(),
+        None => name,
+    }
+}
+
+// Names that are places (files and folders) get "~" expanded. Text, like in
+// `write "~ is my favourite letter" to notes.txt`, is left exactly as typed.
+fn place(names: Vec<String>) -> String {
+    expand_home(one(names))
+}
+
+fn optional_place(names: Vec<String>) -> Option<String> {
+    optional(names).map(expand_home)
+}
+
+fn two_places(names: Vec<String>) -> (String, String) {
+    let (first, second) = two(names);
+    (expand_home(first), expand_home(second))
+}
+
+fn text_and_place(names: Vec<String>) -> (String, String) {
+    let (text, place) = two(names);
+    (text, expand_home(place))
+}
+
 /// Every command Noob understands. `|names| ...` is a closure: a tiny unnamed function.
 pub static COMMANDS: &[Spec] = &[
     // Getting around
@@ -103,7 +141,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "go into photos",
         summary: "go inside a folder (in the noob> prompt)",
         group: Group::GettingAround,
-        build: |names| Command::GoInto(one(names)),
+        build: |names| Command::GoInto(place(names)),
     },
     Spec {
         phrases: &["go back", "go up"],
@@ -128,7 +166,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "show files",
         summary: "list the files and folders here (or in a folder you name)",
         group: Group::Looking,
-        build: |names| Command::ShowFiles(optional(names)),
+        build: |names| Command::ShowFiles(optional_place(names)),
     },
     Spec {
         phrases: &["show all files", "show hidden files"],
@@ -136,7 +174,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "show all files",
         summary: "also list hidden files (names starting with .)",
         group: Group::Looking,
-        build: |names| Command::ShowAllFiles(optional(names)),
+        build: |names| Command::ShowAllFiles(optional_place(names)),
     },
     Spec {
         phrases: &["show details"],
@@ -144,7 +182,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "show details",
         summary: "list with sizes, and when each thing last changed",
         group: Group::Looking,
-        build: |names| Command::ShowDetails(optional(names)),
+        build: |names| Command::ShowDetails(optional_place(names)),
     },
     Spec {
         phrases: &["show tree"],
@@ -152,7 +190,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "show tree",
         summary: "draw the folders inside folders, as a tree",
         group: Group::Looking,
-        build: |names| Command::ShowTree(optional(names)),
+        build: |names| Command::ShowTree(optional_place(names)),
     },
     Spec {
         phrases: &["show size", "how big is"],
@@ -160,7 +198,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "show size photos",
         summary: "how much space a file or folder takes up",
         group: Group::Looking,
-        build: |names| Command::ShowSize(one(names)),
+        build: |names| Command::ShowSize(place(names)),
     },
     Spec {
         phrases: &["read"],
@@ -168,7 +206,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "read notes.txt",
         summary: "show what's inside a file",
         group: Group::Looking,
-        build: |names| Command::Read(one(names)),
+        build: |names| Command::Read(place(names)),
     },
     // Making and changing
     Spec {
@@ -177,7 +215,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "make folder photos",
         summary: "make a new folder",
         group: Group::Making,
-        build: |names| Command::MakeFolder(one(names)),
+        build: |names| Command::MakeFolder(place(names)),
     },
     Spec {
         phrases: &["make file", "new file", "create file"],
@@ -185,7 +223,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "make file notes.txt",
         summary: "make a new, empty file",
         group: Group::Making,
-        build: |names| Command::MakeFile(one(names)),
+        build: |names| Command::MakeFile(place(names)),
     },
     Spec {
         phrases: &["write"],
@@ -196,7 +234,7 @@ pub static COMMANDS: &[Spec] = &[
         summary: "replace a file's text (asks first if it has some)",
         group: Group::Making,
         build: |names| {
-            let (text, file) = two(names);
+            let (text, file) = text_and_place(names);
             Command::Write { text, file }
         },
     },
@@ -207,7 +245,7 @@ pub static COMMANDS: &[Spec] = &[
         summary: "add a line to the end of a file",
         group: Group::Making,
         build: |names| {
-            let (text, file) = two(names);
+            let (text, file) = text_and_place(names);
             Command::Add { text, file }
         },
     },
@@ -217,7 +255,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "open notes.txt",
         summary: "open a file or folder in its usual app",
         group: Group::Making,
-        build: |names| Command::Open(one(names)),
+        build: |names| Command::Open(place(names)),
     },
     // Copying, moving, deleting
     Spec {
@@ -229,7 +267,7 @@ pub static COMMANDS: &[Spec] = &[
         summary: "copy a file or folder (to a new name, or into a folder)",
         group: Group::Moving,
         build: |names| {
-            let (from, to) = two(names);
+            let (from, to) = two_places(names);
             Command::Copy { from, to }
         },
     },
@@ -242,7 +280,7 @@ pub static COMMANDS: &[Spec] = &[
         summary: "move a file or folder somewhere else",
         group: Group::Moving,
         build: |names| {
-            let (from, to) = two(names);
+            let (from, to) = two_places(names);
             Command::Move { from, to }
         },
     },
@@ -253,7 +291,7 @@ pub static COMMANDS: &[Spec] = &[
         summary: "give a file or folder a new name",
         group: Group::Moving,
         build: |names| {
-            let (from, to) = two(names);
+            let (from, to) = two_places(names);
             Command::Rename { from, to }
         },
     },
@@ -263,7 +301,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "delete notes.txt",
         summary: "move a file or folder to the Trash (asks first)",
         group: Group::Moving,
-        build: |names| Command::Delete(one(names)),
+        build: |names| Command::Delete(place(names)),
     },
     // Finding
     Spec {
@@ -281,7 +319,7 @@ pub static COMMANDS: &[Spec] = &[
         summary: "find text inside a file, or inside every file in a folder",
         group: Group::Finding,
         build: |names| {
-            let (text, place) = two(names);
+            let (text, place) = text_and_place(names);
             Command::FindText { text, place }
         },
     },
@@ -374,6 +412,16 @@ mod tests {
         for group in Group::ALL {
             assert!(COMMANDS.iter().any(|spec| spec.group == group), "{group:?}");
         }
+    }
+
+    #[test]
+    fn a_squiggle_means_the_home_folder() {
+        let home = Some(std::path::Path::new("/Users/sam"));
+        let expand = |name: &str| expand_home_with(name.to_string(), home);
+        assert_eq!(expand("~"), "/Users/sam");
+        assert_eq!(expand("~/photos"), "/Users/sam/photos");
+        assert_eq!(expand("~bob"), "~bob", "only ~ on its own or ~/ means home");
+        assert_eq!(expand("a~b"), "a~b");
     }
 
     #[test]

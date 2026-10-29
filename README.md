@@ -68,7 +68,9 @@ cargo install --path .
 | `clear`, `help`, `help copy`, `bye` | |
 
 Names with spaces work with or without quotes: `make folder my photos`.
-Use quotes when a name contains a joining word: `copy "notes to self.txt" to docs`.
+The **last** joining word counts, so `write go to the shop to list.txt` works.
+Use quotes when a name after the joining word contains it: `copy a.txt to "to do"`.
+`~` means your home folder, like in a real terminal: `go into ~/Desktop`.
 
 ## Safety rules
 
@@ -78,12 +80,18 @@ Use quotes when a name contains a joining word: `copy "notes to self.txt" to doc
   or the whole disk.
 - Noob **never overwrites**: copy, move, rename and make refuse if the name is taken.
   `write` asks before replacing text that's already in a file.
-- Shortcuts (symlinks) are never followed when copying, searching or deleting.
+- Shortcuts (symlinks) are never followed when copying, searching or deleting,
+  and Noob won't write through them.
+- Devices and pipes (special files that could make a program wait forever) are
+  left alone.
+- The real commands Noob shows are less careful: `cp` and `mv` replace files
+  without asking, and `rm` skips the Trash. Noob reminds you about `rm`.
 
 ## Privacy
 
 The commands you type in the `noob>` prompt are saved to `~/.noob_history` so the
 up arrow works next time, just like `~/.zsh_history`. Delete that file to clear it.
+To keep one line out of the history (say, a password you `write`), start it with a space.
 
 Colours switch off automatically when the output isn't a terminal, or when the
 `NO_COLOR` environment variable is set.

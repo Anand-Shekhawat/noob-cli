@@ -75,7 +75,10 @@ pub fn execute(command: &Command) -> Result<Reply, ActionError> {
         Command::FindFile(name) => finding::find_file(name),
         Command::FindText { text, place } => finding::find_text(text, place),
         Command::Clear => Ok(Reply::Show(CLEAR_SCREEN.to_string())),
-        Command::Help(topic) => Ok(Reply::Show(help::text(topic.as_deref()))),
+        Command::Help(None) => Ok(Reply::Show(help::everything())),
+        Command::Help(Some(topic)) => help::about(topic)
+            .map(Reply::Show)
+            .ok_or_else(|| ActionError::NoHelp(topic.clone())),
         Command::Bye => Ok(Reply::Show("Bye! See you next time.".to_string())),
     }
 }

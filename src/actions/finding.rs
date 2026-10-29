@@ -70,18 +70,22 @@ pub(super) fn find_text(text: &str, place: &str) -> Result<Reply, ActionError> {
     let path = existing(place)?;
     let wanted = text.to_lowercase();
     let mut matches: Vec<String> = Vec::new();
+    let mut skipped: u64 = 0;
 
     let summary = if path.is_dir() {
         walk::walk(path, false, |file, metadata| {
-            if metadata.is_file() && metadata.len() <= MAX_SEARCH_FILE_SIZE {
-                // Files that aren't text (pictures, programs) have no lines to search, so skip them.
-                if let Ok(content) = fs::read_to_string(file) {
-                    search_lines(
-                        &content,
-                        &relative(Path::new("."), file),
-                        &wanted,
-                        &mut matches,
-                    );
+            if metadata.is_file() {
+                // Big files and files that aren't text (pictures, programs) are skipped,
+                // and counted so we can say so.
+                let content = (metadata.len() <= MAX_SEARCH_FILE_SIZE)
+                    .then(|| fs::read_to_string(file).ok())
+                    .flatten();
+                match content {
+                    Some(content) => {
+                        let label = relative(Path::new("."), file);
+                        search_lines(&content, &label, &wanted, &mut matches);
+                    }
+                    None => skipped += 1,
                 }
             }
             if matches.len() >= MAX_TEXT_RESULTS {
@@ -91,14 +95,25 @@ pub(super) fn find_text(text: &str, place: &str) -> Result<Reply, ActionError> {
             }
         })
     } else {
+        let info = fs::metadata(path).map_err(|error| friendly(error, place))?;
+        if !info.is_file() {
+            return Err(ActionError::NotAFile(place.to_string()));
+        }
         let content = fs::read_to_string(path).map_err(|error| friendly(error, place))?;
         search_lines(&content, place, &wanted, &mut matches);
         Summary::default()
     };
 
-    Ok(Reply::Show(describe_matches(
-        text, place, &matches, &summary,
-    )))
+    let skipped_note = match skipped {
+        0 => String::new(),
+        count => format!(
+            "\n(I skipped {}: not text, or very big.)",
+            plural(count, "file")
+        ),
+    };
+    Ok(Reply::Show(
+        describe_matches(text, place, &matches, &summary) + &skipped_note,
+    ))
 }
 
 fn search_lines(content: &str, label: &str, wanted: &str, matches: &mut Vec<String>) {
@@ -203,6 +218,15 @@ mod tests {
         assert!(shown(find_text("zebra", &test.at("a.txt"))).starts_with("I couldn't find"));
         let picture = find_text("one", &test.at("photo.jpg"));
         assert!(matches!(picture, Err(ActionError::NotText(_))));
+    }
+
+    #[test]
+    fn says_how_many_files_it_could_not_search() {
+        let test = TestFolder::new("find-skipped");
+        fs::write(test.at("a.txt"), "hello").unwrap();
+        fs::write(test.at("photo.jpg"), [0xFF, 0xD8, 0xFF]).unwrap();
+        let result = shown(find_text("hello", &test.path()));
+        assert!(result.contains("I skipped 1 file: not text"), "{result}");
     }
 
     #[test]
