@@ -9,6 +9,9 @@ description = "A beginner-friendly command line: type plain English like `make f
 name = "noob"
 path = "src/main.rs"
 
-# No dependencies on purpose: everything uses Rust's standard library,
-# so every line is something you can read and learn from.
+# Only two outside crates; everything else uses Rust's standard library.
+#   rustyline: up-arrow history and Tab completion in the noob> prompt
+#   trash:     `delete` sends things to the Trash instead of erasing them
 [dependencies]
+rustyline = "19.0.0"
+trash = "5.2.9"

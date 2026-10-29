@@ -1,7 +1,9 @@
-//! Turns what you typed (like "make folder photos") into a `Command`.
+//! Turns what you typed (like `make folder photos`) into a `Command`,
+//! using the phrases in the command table.
 
 use crate::command::Command;
 use crate::suggest;
+use crate::table::{self, Shape, Spec};
 
 /// Why we couldn't understand the input.
 #[derive(Debug, PartialEq, Eq)]
@@ -10,76 +12,157 @@ pub enum ParseError {
     Empty,
     /// The phrase was right but a name was missing, e.g. "make folder".
     MissingName { example: &'static str },
+    /// A `"` was opened but never closed.
+    UnclosedQuote,
     /// We don't know this phrase. Maybe it was a typo of a phrase we do know.
     Unknown { suggestion: Option<&'static str> },
 }
 
+/// One word, or one "quoted name", from the input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Token {
+    pub text: String,
+    pub quoted: bool,
+}
+
+impl Token {
+    /// The lowercase word, if this token can be part of a phrase or a joining word like "to".
+    /// Quoted text never can: in `copy "to do.txt" to docs`, only the second "to" joins.
+    fn keyword(&self) -> Option<String> {
+        (!self.quoted).then(|| self.text.to_lowercase())
+    }
+}
+
 pub fn parse(input: &str) -> Result<Command, ParseError> {
-    // `words` keeps names exactly as typed ("Photos").
-    // `keys` is a lowercase copy, used only to recognise the phrase ("MAKE" == "make").
-    let words: Vec<&str> = input.split_whitespace().collect();
-    let lowercase: Vec<String> = words.iter().map(|word| word.to_lowercase()).collect();
-    let keys: Vec<&str> = lowercase.iter().map(String::as_str).collect();
+    parse_tokens(&tokenize(input)?)
+}
 
-    // A "slice pattern": each arm describes the shape of the words.
-    // `..` means "any number of words after this", and `|` means "or".
-    match keys.as_slice() {
-        [] => Err(ParseError::Empty),
-        ["where", "am", "i"] => Ok(Command::WhereAmI),
-        ["show", "files"] => Ok(Command::ShowFiles),
-        ["clear"] => Ok(Command::Clear),
-        ["help" | "-h" | "--help"] => Ok(Command::Help),
-        ["bye" | "exit" | "quit"] => Ok(Command::Bye),
-        ["make"] => Err(ParseError::MissingName {
-            example: "make folder photos",
-        }),
-        ["make", "folder" | "dir", ..] => {
-            name_from(&words[2..], "make folder photos").map(Command::MakeFolder)
+/// Splits input into words, keeping "quoted names" together as one token.
+pub fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
+    let mut tokens = Vec::new();
+    // `peekable` lets us look at the next letter without taking it.
+    let mut letters = input.chars().peekable();
+    while let Some(&letter) = letters.peek() {
+        if letter.is_whitespace() {
+            letters.next();
+        } else if letter == '"' {
+            letters.next(); // skip the opening quote
+            tokens.push(read_quoted(&mut letters)?);
+        } else {
+            tokens.push(read_word(&mut letters));
         }
-        ["make", "file", ..] => {
-            name_from(&words[2..], "make file notes.txt").map(Command::MakeFile)
+    }
+    Ok(tokens)
+}
+
+/// Reads up to the closing quote. Everything inside, spaces too, is one name.
+fn read_quoted(letters: &mut impl Iterator<Item = char>) -> Result<Token, ParseError> {
+    let mut text = String::new();
+    for letter in letters {
+        if letter == '"' {
+            return Ok(Token { text, quoted: true });
         }
-        ["read", ..] => name_from(&words[1..], "read notes.txt").map(Command::Read),
-        ["delete", ..] => name_from(&words[1..], "delete notes.txt").map(Command::Delete),
-        ["copy", ..] => two_names(&words[1..], &["to"], "copy a.txt to b.txt")
-            .map(|(from, to)| Command::Copy { from, to }),
-        ["move", ..] => two_names(&words[1..], &["into", "to"], "move a.txt into docs")
-            .map(|(from, to)| Command::Move { from, to }),
-        ["rename", ..] => two_names(&words[1..], &["to"], "rename old.txt to new.txt")
-            .map(|(from, to)| Command::Rename { from, to }),
-        _ => Err(ParseError::Unknown {
-            suggestion: suggest::closest(input),
-        }),
+        text.push(letter);
+    }
+    Err(ParseError::UnclosedQuote)
+}
+
+/// Reads letters up to the next space.
+fn read_word(letters: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Token {
+    let mut text = String::new();
+    while let Some(letter) = letters.next_if(|letter| !letter.is_whitespace()) {
+        text.push(letter);
+    }
+    Token {
+        text,
+        quoted: false,
     }
 }
 
-/// Joins the remaining words into one name, so "my photos" works.
-fn name_from(words: &[&str], example: &'static str) -> Result<String, ParseError> {
-    if words.is_empty() {
-        Err(ParseError::MissingName { example })
-    } else {
-        Ok(words.join(" "))
+/// Turns tokens into a command. `main` uses this directly for words typed after `noob`,
+/// because the shell has already split them (and removed any quotes).
+pub fn parse_tokens(tokens: &[Token]) -> Result<Command, ParseError> {
+    if tokens.is_empty() {
+        return Err(ParseError::Empty);
     }
+    let Some((spec, used)) = best_match(tokens) else {
+        let typed = all_text(tokens);
+        return Err(ParseError::Unknown {
+            suggestion: suggest::closest(&typed),
+        });
+    };
+    let names = names_for(spec, &tokens[used..])?;
+    Ok((spec.build)(names))
 }
 
-/// Splits "a.txt to b.txt" around a joining word like "to" into ("a.txt", "b.txt").
-fn two_names(
-    words: &[&str],
-    joiners: &[&str],
-    example: &'static str,
-) -> Result<(String, String), ParseError> {
-    let missing = || ParseError::MissingName { example };
+/// The command-table entry that `input` would run, if any. (Only the table tests need this.)
+#[cfg(test)]
+pub fn spec_for(input: &str) -> Option<&'static Spec> {
+    let tokens = tokenize(input).ok()?;
+    best_match(&tokens).map(|(spec, _)| spec)
+}
 
-    let joiner_at = words
+/// Finds the phrase that matches the start of the tokens. If several match,
+/// the longest wins, so "show all files" would beat "show".
+/// Returns the command and how many tokens the phrase used up.
+fn best_match(tokens: &[Token]) -> Option<(&'static Spec, usize)> {
+    table::COMMANDS
         .iter()
-        .position(|word| joiners.contains(&word.to_lowercase().as_str()))
-        .ok_or_else(missing)?;
+        .flat_map(|spec| spec.phrases.iter().map(move |phrase| (spec, *phrase)))
+        .filter_map(|(spec, phrase)| {
+            let words: Vec<&str> = phrase.split_whitespace().collect();
+            let matches = words.len() <= tokens.len()
+                && words
+                    .iter()
+                    .zip(tokens)
+                    .all(|(word, token)| token.keyword().as_deref() == Some(*word));
+            matches.then_some((spec, words.len()))
+        })
+        .max_by_key(|&(_, used)| used)
+}
 
-    let (before, after) = (&words[..joiner_at], &words[joiner_at + 1..]);
-    if before.is_empty() || after.is_empty() {
-        return Err(missing());
+/// Picks out the names after the phrase, in the shape the command expects.
+fn names_for(spec: &Spec, rest: &[Token]) -> Result<Vec<String>, ParseError> {
+    let missing = || ParseError::MissingName {
+        example: spec.example,
+    };
+    match spec.shape {
+        Shape::Nothing if rest.is_empty() => Ok(Vec::new()),
+        // "clear everything": the phrase is right, but the extra words don't belong.
+        Shape::Nothing => Err(ParseError::Unknown {
+            suggestion: Some(spec.main_phrase()),
+        }),
+        Shape::One => join(rest).map(|name| vec![name]).ok_or_else(missing),
+        Shape::Optional => Ok(join(rest).into_iter().collect()),
+        Shape::Two { joiners } => {
+            let joiner_at = rest
+                .iter()
+                .position(|token| {
+                    token
+                        .keyword()
+                        .is_some_and(|word| joiners.contains(&word.as_str()))
+                })
+                .ok_or_else(missing)?;
+            match (join(&rest[..joiner_at]), join(&rest[joiner_at + 1..])) {
+                (Some(first), Some(second)) => Ok(vec![first, second]),
+                _ => Err(missing()),
+            }
+        }
     }
-    Ok((before.join(" "), after.join(" ")))
+}
+
+/// Joins tokens into one name ("my" + "photos" = "my photos"). `None` if there's nothing.
+fn join(tokens: &[Token]) -> Option<String> {
+    let name = all_text(tokens);
+    (!name.is_empty()).then_some(name)
+}
+
+fn all_text(tokens: &[Token]) -> String {
+    tokens
+        .iter()
+        .map(|token| token.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -90,18 +173,44 @@ mod tests {
         text.to_string()
     }
 
-    #[test]
-    fn make_on_its_own_asks_what_to_make() {
-        let expected = Err(ParseError::MissingName {
-            example: "make folder photos",
-        });
-        assert_eq!(parse("make"), expected);
+    fn word(text: &str) -> Token {
+        Token {
+            text: name(text),
+            quoted: false,
+        }
+    }
+
+    fn quoted(text: &str) -> Token {
+        Token {
+            text: name(text),
+            quoted: true,
+        }
     }
 
     #[test]
-    fn understands_the_usual_help_flags() {
-        assert_eq!(parse("--help"), Ok(Command::Help));
-        assert_eq!(parse("-h"), Ok(Command::Help));
+    fn splits_words_and_quoted_names() {
+        let tokens = tokenize(r#"copy "my notes.txt"  to docs"#).unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                word("copy"),
+                quoted("my notes.txt"),
+                word("to"),
+                word("docs")
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_a_quote_without_its_partner() {
+        assert_eq!(
+            tokenize(r#"make folder "my photos"#),
+            Err(ParseError::UnclosedQuote)
+        );
+        assert_eq!(
+            parse(r#"make folder "my photos"#),
+            Err(ParseError::UnclosedQuote)
+        );
     }
 
     #[test]
@@ -109,7 +218,14 @@ mod tests {
         assert_eq!(parse("where am i"), Ok(Command::WhereAmI));
         assert_eq!(parse("show files"), Ok(Command::ShowFiles));
         assert_eq!(parse("clear"), Ok(Command::Clear));
-        assert_eq!(parse("help"), Ok(Command::Help));
+        assert_eq!(parse("help"), Ok(Command::Help(None)));
+    }
+
+    #[test]
+    fn help_can_be_about_one_command() {
+        assert_eq!(parse("help copy"), Ok(Command::Help(Some(name("copy")))));
+        assert_eq!(parse("--help"), Ok(Command::Help(None)));
+        assert_eq!(parse("-h"), Ok(Command::Help(None)));
     }
 
     #[test]
@@ -118,22 +234,18 @@ mod tests {
     }
 
     #[test]
-    fn has_several_ways_to_say_goodbye() {
+    fn has_several_ways_to_say_things() {
         for word in ["bye", "exit", "quit"] {
             assert_eq!(parse(word), Ok(Command::Bye));
         }
-    }
-
-    #[test]
-    fn makes_folders_with_folder_or_dir() {
-        assert_eq!(
-            parse("make folder photos"),
-            Ok(Command::MakeFolder(name("photos")))
-        );
-        assert_eq!(
-            parse("make dir photos"),
-            Ok(Command::MakeFolder(name("photos")))
-        );
+        for phrase in ["make folder", "make dir", "new folder", "create folder"] {
+            let input = format!("{phrase} photos");
+            assert_eq!(
+                parse(&input),
+                Ok(Command::MakeFolder(name("photos"))),
+                "{phrase}"
+            );
+        }
     }
 
     #[test]
@@ -145,11 +257,28 @@ mod tests {
     }
 
     #[test]
-    fn allows_names_with_spaces() {
-        assert_eq!(
-            parse("make folder my photos"),
-            Ok(Command::MakeFolder(name("my photos")))
-        );
+    fn allows_names_with_spaces_with_or_without_quotes() {
+        let expected = Ok(Command::MakeFolder(name("my photos")));
+        assert_eq!(parse("make folder my photos"), expected);
+        assert_eq!(parse(r#"make folder "my photos""#), expected);
+    }
+
+    #[test]
+    fn quoted_names_can_contain_the_joining_word() {
+        let expected = Command::Copy {
+            from: name("notes to self.txt"),
+            to: name("docs"),
+        };
+        assert_eq!(parse(r#"copy "notes to self.txt" to docs"#), Ok(expected));
+    }
+
+    #[test]
+    fn joining_words_ignore_capitals() {
+        let expected = Command::Rename {
+            from: name("a.txt"),
+            to: name("b.txt"),
+        };
+        assert_eq!(parse("rename a.txt TO b.txt"), Ok(expected));
     }
 
     #[test]
@@ -166,34 +295,26 @@ mod tests {
             parse("delete notes.txt"),
             Ok(Command::Delete(name("notes.txt")))
         );
+        assert_eq!(
+            parse("remove notes.txt"),
+            Ok(Command::Delete(name("notes.txt")))
+        );
     }
 
     #[test]
-    fn copies_with_to() {
-        let expected = Command::Copy {
+    fn copies_and_moves_with_to_or_into() {
+        let copy = Command::Copy {
             from: name("my notes.txt"),
             to: name("backup.txt"),
         };
-        assert_eq!(parse("copy my notes.txt to backup.txt"), Ok(expected));
-    }
+        assert_eq!(parse("copy my notes.txt to backup.txt"), Ok(copy));
 
-    #[test]
-    fn moves_with_into_or_to() {
-        let expected = Command::Move {
+        let moved = Command::Move {
             from: name("a.txt"),
             to: name("docs"),
         };
-        assert_eq!(parse("move a.txt into docs"), Ok(expected.clone()));
-        assert_eq!(parse("move a.txt to docs"), Ok(expected));
-    }
-
-    #[test]
-    fn renames_with_to() {
-        let expected = Command::Rename {
-            from: name("old.txt"),
-            to: name("new.txt"),
-        };
-        assert_eq!(parse("rename old.txt to new.txt"), Ok(expected));
+        assert_eq!(parse("move a.txt into docs"), Ok(moved.clone()));
+        assert_eq!(parse("move a.txt to docs"), Ok(moved));
     }
 
     #[test]
@@ -206,12 +327,32 @@ mod tests {
     fn missing_names_get_an_example() {
         let missing = |example| Err(ParseError::MissingName { example });
         assert_eq!(parse("make folder"), missing("make folder photos"));
+        assert_eq!(parse(r#"make folder """#), missing("make folder photos"));
         assert_eq!(parse("copy a.txt"), missing("copy a.txt to b.txt"));
         assert_eq!(parse("copy to b.txt"), missing("copy a.txt to b.txt"));
         assert_eq!(
             parse("rename old.txt to"),
             missing("rename old.txt to new.txt")
         );
+    }
+
+    #[test]
+    fn half_a_phrase_suggests_the_whole_phrase() {
+        let suggestion = |phrase| {
+            Err(ParseError::Unknown {
+                suggestion: Some(phrase),
+            })
+        };
+        assert_eq!(parse("make"), suggestion("make folder"));
+        assert_eq!(parse("show"), suggestion("show files"));
+    }
+
+    #[test]
+    fn extra_words_after_a_complete_phrase_are_questioned() {
+        let unknown = Err(ParseError::Unknown {
+            suggestion: Some("clear"),
+        });
+        assert_eq!(parse("clear everything"), unknown);
     }
 
     #[test]
@@ -230,6 +371,16 @@ mod tests {
         assert_eq!(
             parse("banana bread"),
             Err(ParseError::Unknown { suggestion: None })
+        );
+    }
+
+    #[test]
+    fn tokens_from_the_shell_keep_spaces_inside_one_name() {
+        // `noob make folder "my photos"` reaches us as three words, the last with a space.
+        let tokens = vec![word("make"), word("folder"), quoted("my photos")];
+        assert_eq!(
+            parse_tokens(&tokens),
+            Ok(Command::MakeFolder(name("my photos")))
         );
     }
 }

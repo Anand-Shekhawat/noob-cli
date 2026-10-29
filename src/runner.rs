@@ -4,7 +4,7 @@ use std::io::{self, BufRead};
 
 use crate::actions;
 use crate::command::Command;
-use crate::parser::{self, ParseError};
+use crate::parser::{self, ParseError, Token};
 
 /// What happened, so the caller knows whether to keep going.
 pub enum Outcome {
@@ -13,12 +13,31 @@ pub enum Outcome {
     Quit,
 }
 
+/// Runs one line typed at the `noob>` prompt.
 pub fn run_line(input: &str) -> Outcome {
-    let command = match parser::parse(input) {
+    run(parser::parse(input), input.trim())
+}
+
+/// Runs the words typed after `noob` in the normal terminal.
+/// The shell has already removed any quotes, so a word with a space inside
+/// (from `noob make folder "my photos"`) must have been one quoted name.
+pub fn run_words(words: &[String]) -> Outcome {
+    let tokens: Vec<Token> = words
+        .iter()
+        .map(|word| Token {
+            text: word.clone(),
+            quoted: word.is_empty() || word.contains(char::is_whitespace),
+        })
+        .collect();
+    run(parser::parse_tokens(&tokens), &words.join(" "))
+}
+
+fn run(parsed: Result<Command, ParseError>, typed: &str) -> Outcome {
+    let command = match parsed {
         Ok(command) => command,
         Err(ParseError::Empty) => return Outcome::Done, // pressing Enter on nothing is fine
         Err(error) => {
-            eprintln!("{}", explain(&error, input.trim()));
+            eprintln!("{}", explain(&error, typed));
             return Outcome::Failed;
         }
     };
@@ -58,6 +77,9 @@ fn explain(error: &ParseError, input: &str) -> String {
         ParseError::Empty => String::new(),
         ParseError::MissingName { example } => {
             format!("? Almost! Tell me the name too, like: {example}")
+        }
+        ParseError::UnclosedQuote => {
+            "? A quote is missing its partner. Use two, like: make folder \"my photos\"".to_string()
         }
         ParseError::Unknown {
             suggestion: Some(phrase),

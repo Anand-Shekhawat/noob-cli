@@ -1,19 +1,85 @@
-//! The list shown when you type `help`.
+//! The text shown by `help` and `help <command>`, built from the command table.
 
-pub const TEXT: &str = "\
-Here's everything Noob understands:
+use crate::parser;
+use crate::table::{self, COMMANDS, Group};
 
-  where am i                   show which folder you're in
-  show files                   list the files and folders here
-  make folder photos           make a new folder (also: make dir photos)
-  make file notes.txt          make a new, empty file
-  read notes.txt               show what's inside a file
-  copy a.txt to b.txt          copy a file (or into a folder: copy a.txt to docs)
-  move a.txt into docs         move a file or folder somewhere else
-  rename old.txt to new.txt    give a file or folder a new name
-  delete notes.txt             delete a file or an empty folder (asks first)
-  clear                        clear the screen
-  help                         show this list
-  bye                          leave Noob (also: exit, quit)
+/// Width of the example column, so the summaries line up.
+const EXAMPLE_WIDTH: usize = 30;
 
-Tip: names can have spaces, like: make folder my photos";
+/// `help` on its own, or `help copy` for one command.
+pub fn text(topic: Option<&str>) -> String {
+    match topic {
+        None => everything(),
+        Some(topic) => about(topic).unwrap_or_else(|| {
+            format!("I don't have help for \"{topic}\". Type help to see everything.")
+        }),
+    }
+}
+
+fn everything() -> String {
+    let mut lines = vec!["Here's everything Noob understands:".to_string()];
+    for group in Group::ALL {
+        lines.push(String::new());
+        lines.push(group.title().to_string());
+        for spec in COMMANDS.iter().filter(|spec| spec.group == group) {
+            lines.push(format!(
+                "  {:<EXAMPLE_WIDTH$} {}",
+                spec.example, spec.summary
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push("Tip: put names with spaces in quotes, like: make folder \"my photos\"".to_string());
+    lines.push("For more about one command, type help and its name, like: help copy".to_string());
+    lines.join("\n")
+}
+
+fn about(topic: &str) -> Option<String> {
+    let spec = table::find(topic)?;
+    let mut lines = vec![
+        format!("{}: {}", spec.main_phrase(), spec.summary),
+        format!("  Example:       {}", spec.example),
+    ];
+    // Run the example through the parser to show its real command, so they can never disagree.
+    let real = parser::parse(spec.example)
+        .ok()
+        .and_then(|command| command.real_command());
+    if let Some(real) = real {
+        lines.push(format!("  Real command:  {real}"));
+    }
+    if let [_, others @ ..] = spec.phrases
+        && !others.is_empty()
+    {
+        lines.push(format!("  Also works:    {}", others.join(", ")));
+    }
+    Some(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lists_every_command_under_its_group() {
+        let help = text(None);
+        for spec in COMMANDS {
+            assert!(help.contains(spec.example), "{} is missing", spec.example);
+        }
+        for group in Group::ALL {
+            assert!(help.contains(group.title()));
+        }
+    }
+
+    #[test]
+    fn explains_one_command_with_its_real_command_and_other_names() {
+        let help = text(Some("make dir"));
+        assert!(help.starts_with("make folder: make a new folder"));
+        assert!(help.contains("Real command:  mkdir -p photos"));
+        assert!(help.contains("Also works:    make dir, new folder, create folder"));
+    }
+
+    #[test]
+    fn says_so_when_there_is_no_help_for_a_topic() {
+        assert!(text(Some("banana")).contains("I don't have help for \"banana\""));
+    }
+}

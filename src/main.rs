@@ -11,6 +11,7 @@ mod parser;
 mod repl;
 mod runner;
 mod suggest;
+mod table;
 
 use std::env;
 use std::process::ExitCode;
@@ -30,7 +31,7 @@ fn main() -> ExitCode {
     }
 
     // A failure exit code lets scripts know something went wrong.
-    match runner::run_line(&words.join(" ")) {
+    match runner::run_words(&words) {
         Outcome::Failed => ExitCode::FAILURE,
         Outcome::Done | Outcome::Quit => ExitCode::SUCCESS,
     }

@@ -1,36 +1,36 @@
-//! "Did you mean...?" — finds the known phrase closest to a typo.
+//! "Did you mean...?" — finds the known phrase closest to what was typed.
 
-/// The start of every phrase Noob understands.
-pub const PHRASES: [&str; 14] = [
-    "where am i",
-    "show files",
-    "make folder",
-    "make file",
-    "read",
-    "copy",
-    "move",
-    "rename",
-    "delete",
-    "clear",
-    "help",
-    "bye",
-    "exit",
-    "quit",
-];
+use crate::table;
 
 /// A typo counts as "close" if it needs at most this many letter changes.
 const MAX_TYPOS: usize = 2;
 
 /// Returns the known phrase that best matches the start of `input`, if one is close enough.
 pub fn closest(input: &str) -> Option<&'static str> {
-    let words: Vec<String> = input.split_whitespace().map(str::to_lowercase).collect();
+    let typed: Vec<String> = input.split_whitespace().map(str::to_lowercase).collect();
+    if typed.is_empty() {
+        return None;
+    }
+    unfinished_phrase(&typed).or_else(|| nearest_typo(&typed))
+}
 
-    PHRASES
-        .iter()
-        .map(|&phrase| {
+/// "make" is the start of "make folder", so that's probably what was meant.
+fn unfinished_phrase(typed: &[String]) -> Option<&'static str> {
+    table::all_phrases().find(|phrase| {
+        let words: Vec<&str> = phrase.split_whitespace().collect();
+        words.len() > typed.len() && words.iter().zip(typed).all(|(word, typed)| word == typed)
+    })
+}
+
+/// "maek folder" is two letter changes away from "make folder".
+fn nearest_typo(typed: &[String]) -> Option<&'static str> {
+    table::all_phrases()
+        // Flags like "-h" are too short to compare: "ls" is only 2 changes from "-h".
+        .filter(|phrase| !phrase.starts_with('-'))
+        .map(|phrase| {
             // Compare "make folder" with the first two typed words, "read" with the first one, ...
             let phrase_length = phrase.split_whitespace().count();
-            let start_of_input = words
+            let start_of_input = typed
                 .iter()
                 .take(phrase_length)
                 .map(String::as_str)
@@ -85,12 +85,20 @@ mod tests {
     }
 
     #[test]
+    fn suggests_the_rest_of_an_unfinished_phrase() {
+        assert_eq!(closest("make"), Some("make folder"));
+        assert_eq!(closest("where am"), Some("where am i"));
+    }
+
+    #[test]
     fn ignores_capital_letters() {
         assert_eq!(closest("SHWO FILES"), Some("show files"));
     }
 
     #[test]
-    fn suggests_nothing_for_nonsense() {
+    fn suggests_nothing_for_nonsense_or_short_flags() {
         assert_eq!(closest("banana bread"), None);
+        assert_eq!(closest("ls"), None);
+        assert_eq!(closest(""), None);
     }
 }

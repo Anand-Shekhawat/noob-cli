@@ -10,12 +10,22 @@ pub enum Command {
     MakeFolder(String),
     MakeFile(String),
     Read(String),
-    Copy { from: String, to: String },
-    Move { from: String, to: String },
-    Rename { from: String, to: String },
+    Copy {
+        from: String,
+        to: String,
+    },
+    Move {
+        from: String,
+        to: String,
+    },
+    Rename {
+        from: String,
+        to: String,
+    },
     Delete(String),
     Clear,
-    Help,
+    /// `help` on its own, or `help copy` for one command.
+    Help(Option<String>),
     Bye,
 }
 
@@ -34,7 +44,7 @@ impl Command {
             }
             Command::Delete(name) => format!("rm {0}   (for a folder: rmdir {0})", quote(name)),
             Command::Clear => "clear".to_string(),
-            Command::Help | Command::Bye => return None,
+            Command::Help(_) | Command::Bye => return None,
         };
         Some(text)
     }

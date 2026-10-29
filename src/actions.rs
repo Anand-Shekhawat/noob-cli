@@ -123,7 +123,7 @@ pub fn execute(command: &Command) -> Result<String, ActionError> {
         Command::Rename { from, to } => rename(from, to),
         Command::Delete(name) => delete(name),
         Command::Clear => Ok(CLEAR_SCREEN.to_string()),
-        Command::Help => Ok(help::TEXT.to_string()),
+        Command::Help(topic) => Ok(help::text(topic.as_deref())),
         Command::Bye => Ok("Bye! See you next time.".to_string()),
     }
 }
