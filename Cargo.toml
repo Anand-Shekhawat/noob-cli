@@ -1,0 +1,14 @@
+[package]
+name = "noob-cli"
+version = "0.1.0"
+edition = "2024"
+description = "A beginner-friendly command line: type plain English like `make folder photos`."
+
+# The program you run is called `noob`, even though the package is `noob-cli`.
+[[bin]]
+name = "noob"
+path = "src/main.rs"
+
+# No dependencies on purpose: everything uses Rust's standard library,
+# so every line is something you can read and learn from.
+[dependencies]
