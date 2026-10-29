@@ -2,9 +2,10 @@
 
 use std::io::{self, BufRead};
 
-use crate::actions;
+use crate::actions::{self, Reply};
 use crate::command::Command;
 use crate::parser::{self, ParseError, Token};
+use crate::style;
 
 /// What happened, so the caller knows whether to keep going.
 pub enum Outcome {
@@ -37,20 +38,21 @@ fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Out
         Ok(command) => command,
         Err(ParseError::Empty) => return Outcome::Done, // pressing Enter on nothing is fine
         Err(error) => {
-            eprintln!("{}", explain(&error, typed));
+            eprintln!("{}", style::warning(&explain(&error, typed)));
             return Outcome::Failed;
         }
     };
 
     if command.prompt_only() && !in_prompt {
-        eprintln!(
+        let hint = format!(
             "? Moving around only works inside the noob prompt. \
              Type noob on its own to open it, then try: {typed}"
         );
+        eprintln!("{}", style::warning(&hint));
         return Outcome::Failed;
     }
     if let Err(error) = actions::check_ready(&command) {
-        eprintln!("✗ {error}");
+        print_error(&error.to_string());
         return Outcome::Failed;
     }
     if let Some(question) = command.confirmation_question()
@@ -60,15 +62,18 @@ fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Out
         return Outcome::Done;
     }
 
+    // Worked out before running: after a delete or move, the thing it describes is gone.
+    let real = command.real_command();
     match actions::execute(&command) {
-        Ok(message) => println!("{message}"),
+        Ok(Reply::Done(message)) => println!("{}", style::success(&format!("✓ {message}"))),
+        Ok(Reply::Show(text)) => println!("{text}"),
         Err(error) => {
-            eprintln!("✗ {error}");
+            print_error(&error.to_string());
             return Outcome::Failed;
         }
     }
-    if let Some(real) = command.real_command() {
-        println!("  (real command: {real})");
+    if let Some(real) = real {
+        println!("{}", style::quiet(&format!("  (real command: {real})")));
     }
 
     if command == Command::Bye {
@@ -76,6 +81,10 @@ fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Out
     } else {
         Outcome::Done
     }
+}
+
+fn print_error(message: &str) {
+    eprintln!("{}", style::error(&format!("✗ {message}")));
 }
 
 /// A friendly sentence for each way the parser can fail.
@@ -104,13 +113,18 @@ fn explain(error: &ParseError, input: &str) -> String {
 /// Prints the question and returns true only if the user types "yes" or "y".
 /// `input` is the keyboard in real use, but tests can pass in any text instead.
 fn ask_yes(question: &str, input: &mut impl BufRead) -> bool {
-    println!("⚠ {question} Type yes to continue:");
+    println!(
+        "{}",
+        style::warning(&format!("⚠ {question} Type yes to continue:"))
+    );
     let mut answer = String::new();
     match input.read_line(&mut answer) {
         Ok(0) => false, // input closed without an answer, so the answer is no
         Ok(_) => matches!(answer.trim().to_lowercase().as_str(), "yes" | "y"),
         Err(error) => {
-            eprintln!("✗ I couldn't read your answer ({error}), so I did nothing.");
+            print_error(&format!(
+                "I couldn't read your answer ({error}), so I did nothing."
+            ));
             false
         }
     }

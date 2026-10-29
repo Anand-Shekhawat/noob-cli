@@ -6,10 +6,12 @@
 
 mod actions;
 mod command;
+mod completer;
 mod help;
 mod parser;
 mod repl;
 mod runner;
+mod style;
 mod suggest;
 mod table;
 
