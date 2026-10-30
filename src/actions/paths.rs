@@ -74,7 +74,7 @@ fn short_with_home(path: &Path, home: Option<&Path>) -> String {
     // `strip_prefix` compares whole folder names, so "/Users/samantha" doesn't match "/Users/sam".
     match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
         None => path.display().to_string(),
     }
 }
@@ -96,12 +96,18 @@ pub(super) fn same_thing(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// On Windows, asking for each name's full path gives back the name the file really
+/// has on disk, so two spellings of the same file come back identical.
 #[cfg(not(unix))]
-pub(super) fn same_thing(_a: &Path, _b: &Path) -> bool {
-    false
+pub(super) fn same_thing(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
-#[cfg(test)]
+// These example paths are written the Mac way, so they only run on Mac and Linux.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

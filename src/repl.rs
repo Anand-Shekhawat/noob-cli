@@ -5,7 +5,7 @@
 //! commands, and Tab asks `completer.rs` what could come next.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use rustyline::error::ReadlineError;
@@ -39,7 +39,7 @@ pub fn run() -> ExitCode {
         }
     };
 
-    let history = std::env::home_dir().map(|home| home.join(HISTORY_FILE));
+    let history = history_file();
     if let Some(path) = &history {
         load_history(&mut editor, path);
     }
@@ -50,6 +50,16 @@ pub fn run() -> ExitCode {
         eprintln!("⚠ I couldn't save your command history: {error}");
     }
     code
+}
+
+/// Where earlier commands are kept. The `NOOB_HISTORY` setting can point somewhere
+/// else, or be `off` to keep no history at all (tests use it to stay out of your files).
+fn history_file() -> Option<PathBuf> {
+    match std::env::var_os("NOOB_HISTORY") {
+        Some(setting) if setting == "off" => None,
+        Some(setting) => Some(PathBuf::from(setting)),
+        None => std::env::home_dir().map(|home| home.join(HISTORY_FILE)),
+    }
 }
 
 fn new_editor() -> rustyline::Result<NoobEditor> {

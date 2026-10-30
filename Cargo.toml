@@ -1,7 +1,9 @@
 [package]
 name = "noob-cli"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/Anand-Shekhawat/noob-cli"
 description = "A beginner-friendly command line: type plain English like `make folder photos`."
 
 # The program you run is called `noob`, even though the package is `noob-cli`.

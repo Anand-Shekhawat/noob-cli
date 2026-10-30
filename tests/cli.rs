@@ -25,7 +25,7 @@ impl Playground {
 
     /// Where noob runs. Its full, standard path, because that's what noob reports.
     fn work(&self) -> PathBuf {
-        fs::canonicalize(self.root.join("work")).expect("work folder")
+        plain(fs::canonicalize(self.root.join("work")).expect("work folder"))
     }
 
     fn home(&self) -> PathBuf {
@@ -36,7 +36,10 @@ impl Playground {
         let mut command = Command::new(env!("CARGO_BIN_EXE_noob"));
         command
             .current_dir(self.work())
+            // A pretend home on every kind of computer (Windows calls it USERPROFILE).
             .env("HOME", self.home())
+            .env("USERPROFILE", self.home())
+            .env("NOOB_HISTORY", self.home().join(".noob_history"))
             .env("NO_COLOR", "1");
         command
     }
@@ -68,6 +71,15 @@ impl Drop for Playground {
     }
 }
 
+/// On Windows, `canonicalize` writes paths as `\\?\C:\...`, but programs print `C:\...`.
+fn plain(path: PathBuf) -> PathBuf {
+    let text = path.display().to_string();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path,
+    }
+}
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -81,10 +93,7 @@ fn makes_a_folder_from_the_normal_terminal() {
     assert!(playground.work().join("my photos").is_dir());
     let shown = text(&output.stdout);
     assert!(shown.contains("✓ Made folder \"my photos\""), "{shown}");
-    assert!(
-        shown.contains("(real command: mkdir -p 'my photos')"),
-        "{shown}"
-    );
+    assert!(shown.contains("(real command: mkdir"), "{shown}");
 }
 
 #[test]
@@ -134,7 +143,7 @@ fn delete_asks_first_and_anything_but_yes_keeps_the_file() {
     fs::write(playground.work().join("keep.txt"), "precious").unwrap();
     let output = playground.prompt("delete keep.txt\nno\nbye\n");
 
-    assert!(text(&output.stdout).contains("Move \"keep.txt\" to the Trash?"));
+    assert!(text(&output.stdout).contains("Move \"keep.txt\" to the"));
     assert!(text(&output.stdout).contains("Okay, I left everything as it was."));
     assert_eq!(
         fs::read_to_string(playground.work().join("keep.txt")).unwrap(),
@@ -196,9 +205,16 @@ fn finds_text_and_names_from_the_normal_terminal() {
     fs::write(notes.join("todo.txt"), "buy milk\ncall Sam\n").unwrap();
 
     let by_name = text(&playground.run(&["find", "file", "todo"]).stdout);
-    assert!(by_name.contains("notes/todo.txt"), "{by_name}");
+    let todo = std::path::Path::new("notes")
+        .join("todo.txt")
+        .display()
+        .to_string();
+    assert!(by_name.contains(&todo), "{by_name}");
     let by_text = text(&playground.run(&["find", "sam", "in", "notes"]).stdout);
-    assert!(by_text.contains("notes/todo.txt:2  call Sam"), "{by_text}");
+    assert!(
+        by_text.contains(&format!("{todo}:2  call Sam")),
+        "{by_text}"
+    );
 }
 
 #[test]

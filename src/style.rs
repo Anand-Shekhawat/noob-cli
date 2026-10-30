@@ -11,7 +11,16 @@ use std::sync::OnceLock;
 
 fn colour_allowed() -> bool {
     let no_color = std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
-    !cfg!(test) && !no_color
+    !cfg!(test) && !no_color && understands_colour()
+}
+
+/// Mac and Linux terminals all understand colour codes. On Windows, Windows Terminal
+/// and VS Code do, but the old console window shows them as junk like "[32m".
+fn understands_colour() -> bool {
+    if !cfg!(windows) {
+        return true;
+    }
+    std::env::var_os("WT_SESSION").is_some() || std::env::var_os("TERM_PROGRAM").is_some()
 }
 
 /// `OnceLock` works the answer out the first time, then remembers it.

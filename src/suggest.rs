@@ -25,8 +25,9 @@ fn unfinished_phrase(typed: &[String]) -> Option<&'static str> {
 /// "maek folder" is two letter changes away from "make folder".
 fn nearest_typo(typed: &[String]) -> Option<&'static str> {
     table::all_phrases()
-        // Flags like "-h" are too short to compare: "ls" is only 2 changes from "-h".
-        .filter(|phrase| !phrase.starts_with('-'))
+        // Very short phrases ("is", "-h") are too short to compare: "ls" is only
+        // 1 change from "is", but it almost certainly didn't mean it.
+        .filter(|phrase| !phrase.starts_with('-') && phrase.len() > 2)
         .map(|phrase| {
             // Compare "make folder" with the first two typed words, "read" with the first one, ...
             let phrase_length = phrase.split_whitespace().count();

@@ -9,11 +9,13 @@ mod command;
 mod completer;
 mod help;
 mod parser;
+mod real;
 mod repl;
 mod runner;
 mod style;
 mod suggest;
 mod table;
+mod tools;
 
 use std::env;
 use std::process::ExitCode;

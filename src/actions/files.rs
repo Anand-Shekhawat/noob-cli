@@ -174,7 +174,7 @@ pub(super) fn open(name: &str) -> Result<Reply, ActionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::test_support::{TestFolder, make_pipe};
+    use crate::actions::test_support::TestFolder;
 
     #[test]
     fn makes_nested_folders() {
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn will_not_read_or_write_pipes_that_could_wait_forever() {
         let test = TestFolder::new("read-pipe");
-        let pipe = make_pipe(&test, "pipe");
+        let pipe = crate::actions::test_support::make_pipe(&test, "pipe");
         assert!(matches!(read(&pipe), Err(ActionError::NotAFile(_))));
         assert!(matches!(add("hi", &pipe), Err(ActionError::NotAFile(_))));
     }

@@ -4,7 +4,7 @@
 //! this one list. Adding a command means adding one entry here, plus its real
 //! work in `actions` (the compiler reminds you about that part).
 
-use crate::command::Command;
+use crate::command::{Command, ToolCommand};
 
 /// What comes after the phrase.
 pub enum Shape {
@@ -16,6 +16,8 @@ pub enum Shape {
     Optional,
     /// Two names with a joining word between them: `copy a.txt to b.txt`
     Two { joiners: &'static [&'static str] },
+    /// A name, then one last word: `is git installed`
+    Ending(&'static str),
 }
 
 /// Sections of the help list.
@@ -26,16 +28,18 @@ pub enum Group {
     Making,
     Moving,
     Finding,
+    Tools,
     Other,
 }
 
 impl Group {
-    pub const ALL: [Group; 6] = [
+    pub const ALL: [Group; 7] = [
         Group::GettingAround,
         Group::Looking,
         Group::Making,
         Group::Moving,
         Group::Finding,
+        Group::Tools,
         Group::Other,
     ];
 
@@ -46,6 +50,7 @@ impl Group {
             Group::Making => "Making and changing",
             Group::Moving => "Copying, moving, deleting",
             Group::Finding => "Finding",
+            Group::Tools => "Installing tools and apps",
             Group::Other => "Other",
         }
     }
@@ -323,7 +328,72 @@ pub static COMMANDS: &[Spec] = &[
             Command::FindText { text, place }
         },
     },
+    // Installing tools and apps
+    Spec {
+        phrases: &["install"],
+        shape: Shape::One,
+        example: "install git",
+        summary: "install a tool or app (see what's there: show tools)",
+        group: Group::Tools,
+        build: |names| Command::Tool(ToolCommand::Install(one(names))),
+    },
+    Spec {
+        phrases: &["uninstall"],
+        shape: Shape::One,
+        example: "uninstall vlc",
+        summary: "remove something you installed",
+        group: Group::Tools,
+        build: |names| Command::Tool(ToolCommand::Uninstall(one(names))),
+    },
+    Spec {
+        phrases: &["update everything", "update all", "upgrade everything"],
+        shape: Shape::Nothing,
+        example: "update everything",
+        summary: "get the newest version of everything you installed",
+        group: Group::Tools,
+        build: |_| Command::Tool(ToolCommand::UpdateAll),
+    },
+    Spec {
+        phrases: &["show tools", "list tools"],
+        shape: Shape::Nothing,
+        example: "show tools",
+        summary: "the tools and apps Noob knows by name",
+        group: Group::Tools,
+        build: |_| Command::Tool(ToolCommand::ShowTools),
+    },
+    Spec {
+        phrases: &["show installed", "list installed"],
+        shape: Shape::Nothing,
+        example: "show installed",
+        summary: "everything installed with Homebrew or winget",
+        group: Group::Tools,
+        build: |_| Command::Tool(ToolCommand::ShowInstalled),
+    },
+    Spec {
+        phrases: &["is"],
+        shape: Shape::Ending("installed"),
+        example: "is git installed",
+        summary: "check whether something is installed",
+        group: Group::Tools,
+        build: |names| Command::Tool(ToolCommand::IsInstalled(one(names))),
+    },
+    Spec {
+        phrases: &["search tools", "search apps"],
+        shape: Shape::One,
+        example: "search tools video",
+        summary: "look for more in Homebrew or winget",
+        group: Group::Tools,
+        build: |names| Command::Tool(ToolCommand::SearchTools(one(names))),
+    },
     // Other
+    Spec {
+        phrases: &["version", "--version", "-v"],
+        shape: Shape::Nothing,
+        example: "version",
+        summary: "which version of Noob this is",
+        group: Group::Other,
+        build: |_| Command::Version,
+    },
     Spec {
         phrases: &["clear"],
         shape: Shape::Nothing,
@@ -419,7 +489,8 @@ mod tests {
         let home = Some(std::path::Path::new("/Users/sam"));
         let expand = |name: &str| expand_home_with(name.to_string(), home);
         assert_eq!(expand("~"), "/Users/sam");
-        assert_eq!(expand("~/photos"), "/Users/sam/photos");
+        let photos = std::path::Path::new("/Users/sam").join("photos");
+        assert_eq!(expand("~/photos"), photos.display().to_string());
         assert_eq!(expand("~bob"), "~bob", "only ~ on its own or ~/ means home");
         assert_eq!(expand("a~b"), "a~b");
     }
