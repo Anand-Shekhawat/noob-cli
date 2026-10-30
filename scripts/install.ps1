@@ -4,8 +4,9 @@
 #   irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/install.ps1 | iex
 #
 # What it does: downloads the newest Noob from GitHub, checks the download isn't
-# damaged, puts noob.exe in your user Programs folder, and adds that folder to PATH
-# so typing `noob` works in any new terminal window.
+# damaged, puts noob.exe and Noob's window (noob-app.exe) in your user Programs
+# folder, adds that folder to PATH so typing `noob` works in any new terminal window,
+# and adds Noob to your Start menu.
 
 # To install one exact version instead of the newest: .\install.ps1 -Version v0.3.0
 param([string]$Version = '')
@@ -46,8 +47,12 @@ try {
     Expand-Archive $zip -DestinationPath $temp
     $installDir = Join-Path $env:LOCALAPPDATA 'Programs\noob'
     New-Item -ItemType Directory -Force $installDir | Out-Null
-    $exe = Get-ChildItem $temp -Recurse -Filter 'noob.exe' | Select-Object -First 1
-    Copy-Item $exe.FullName $installDir -Force
+    # noob.exe (the terminal Noob), noob-app.exe (Noob's window) and its icon.
+    foreach ($name in @('noob.exe', 'noob-app.exe', 'noob.ico')) {
+        $file = Get-ChildItem $temp -Recurse -Filter $name | Select-Object -First 1
+        if ($file) { Copy-Item $file.FullName $installDir -Force }
+        elseif ($name -eq 'noob.exe') { throw "The download doesn't contain noob.exe, so I stopped." }
+    }
 }
 finally {
     Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
@@ -63,4 +68,17 @@ if (($userPath -split ';') -notcontains $installDir) {
     Write-Host "Added $installDir to your PATH."
 }
 
-Write-Host "Noob $($release.tag_name) is installed. Open a new terminal window and type: noob" -ForegroundColor Green
+# A Start menu entry for Noob's window, with its icon.
+$app = Join-Path $installDir 'noob-app.exe'
+if (Test-Path $app) {
+    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Noob.lnk'
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+    $link.TargetPath = $app
+    $link.WorkingDirectory = $env:USERPROFILE
+    $link.IconLocation = Join-Path $installDir 'noob.ico'
+    $link.Description = 'Noob: a friendly command line'
+    $link.Save()
+    Write-Host 'Added Noob to your Start menu.'
+}
+
+Write-Host "Noob $($release.tag_name) is installed. Open it from the Start menu, or type noob in a new terminal window." -ForegroundColor Green

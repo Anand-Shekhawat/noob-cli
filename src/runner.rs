@@ -1,11 +1,10 @@
-//! Runs one line of input: understand it, ask if it's risky, do it, print the result.
+//! The terminal's side of running a line: hand it to Noob's engine, answer its
+//! "are you sure?" questions from the keyboard, and print what happened in colour.
 
 use std::io::{self, BufRead};
 
-use crate::actions::{self, Reply};
-use crate::command::Command;
-use crate::parser::{self, ParseError, Token};
-use crate::style;
+use noob_cli::engine::{self, Line, Next, Place};
+use noob_cli::style;
 
 /// What happened, so the caller knows whether to keep going.
 pub enum Outcome {
@@ -16,108 +15,49 @@ pub enum Outcome {
 
 /// Runs one line typed at the `noob>` prompt.
 pub fn run_line(input: &str) -> Outcome {
-    run(parser::parse(input), input.trim(), true)
+    handle(engine::understand(input, Place::Prompt))
 }
 
 /// Runs the words typed after `noob` in the normal terminal.
-/// The shell has already removed any quotes, so a word with a space inside
-/// (from `noob make folder "my photos"`) must have been one quoted name.
 pub fn run_words(words: &[String]) -> Outcome {
-    let tokens: Vec<Token> = words
-        .iter()
-        .map(|word| Token {
-            text: word.clone(),
-            quoted: word.is_empty() || word.contains(char::is_whitespace),
-        })
-        .collect();
-    let typed = words.join(" ");
-    // `noob "make folder" photos` puts the phrase itself in quotes. If that isn't
-    // understood, try once more, reading every word as if it was typed in the prompt.
-    let parsed = match parser::parse_tokens(&tokens) {
-        Err(ParseError::Unknown { suggestion }) => {
-            parser::parse(&typed).map_err(|_| ParseError::Unknown { suggestion })
-        }
-        other => other,
-    };
-    run(parsed, &typed, false)
+    handle(engine::understand_words(words))
 }
 
-fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Outcome {
-    let command = match parsed {
-        Ok(command) => command,
-        Err(ParseError::Empty) => return Outcome::Done, // pressing Enter on nothing is fine
-        Err(error) => {
-            eprintln!("{}", style::warning(&explain(&error, typed)));
-            return Outcome::Failed;
-        }
-    };
-
-    if command.prompt_only() && !in_prompt {
-        let hint = format!(
-            "? Moving around only works inside the noob prompt. \
-             Type noob on its own to open it, then try: {typed}"
-        );
-        eprintln!("{}", style::warning(&hint));
-        return Outcome::Failed;
-    }
-    if let Err(error) = actions::check_ready(&command) {
-        print_error(&error.to_string());
-        return Outcome::Failed;
-    }
-    if let Some(question) = actions::question(&command)
-        && !ask_yes(&question, &mut io::stdin().lock())
-    {
-        println!("Okay, I left everything as it was.");
-        return Outcome::Done;
-    }
-
-    // Worked out before running: after a delete or move, the thing it describes is gone.
-    let real = command.real_command();
+fn handle(next: Next) -> Outcome {
     let mut ask = |question: &str| ask_yes(question, &mut io::stdin().lock());
-    match actions::execute(&command, &mut ask) {
-        Ok(Reply::Done(message)) => println!("{}", style::success(&format!("✓ {message}"))),
-        Ok(Reply::Show(text)) => println!("{text}"),
-        Err(error) => {
-            print_error(&error.to_string());
-            return Outcome::Failed;
+    let outcome = match next {
+        Next::Finished(outcome) => outcome,
+        Next::Ask { question, command } => {
+            if ask(&question) {
+                engine::finish(&command, &mut ask)
+            } else {
+                engine::declined()
+            }
         }
+        Next::Run(command) => engine::finish(&command, &mut ask),
+    };
+    for line in &outcome.lines {
+        print(line);
     }
-    if let Some(real) = real {
-        println!("{}", style::quiet(&format!("  (real command: {real})")));
+    match (outcome.quit, outcome.failed) {
+        (true, _) => Outcome::Quit,
+        (false, true) => Outcome::Failed,
+        (false, false) => Outcome::Done,
     }
+}
 
-    if command == Command::Bye {
-        Outcome::Quit
-    } else {
-        Outcome::Done
+fn print(line: &Line) {
+    match line {
+        Line::Done(message) => println!("{}", style::success(&format!("✓ {message}"))),
+        Line::Show(text) => println!("{text}"),
+        Line::Problem(message) => print_error(message),
+        Line::Hint(message) => eprintln!("{}", style::warning(message)),
+        Line::Real(real) => println!("{}", style::quiet(&format!("  (real command: {real})"))),
     }
 }
 
 fn print_error(message: &str) {
     eprintln!("{}", style::error(&format!("✗ {message}")));
-}
-
-/// A friendly sentence for each way the parser can fail.
-fn explain(error: &ParseError, input: &str) -> String {
-    match error {
-        ParseError::Empty => String::new(),
-        ParseError::MissingName { example } => {
-            format!("? Almost! Tell me the name too, like: {example}")
-        }
-        ParseError::UnclosedQuote => {
-            "? A quote is missing its partner. Use two, like: make folder \"my photos\"".to_string()
-        }
-        ParseError::Unknown {
-            suggestion: Some(phrase),
-        } => {
-            format!(
-                "? I don't know \"{input}\". Did you mean \"{phrase}\"? Type help to see everything."
-            )
-        }
-        ParseError::Unknown { suggestion: None } => {
-            format!("? I don't know \"{input}\". Type help to see everything I understand.")
-        }
-    }
 }
 
 /// Prints the question and returns true only if the user types "yes" or "y".
@@ -151,13 +91,5 @@ mod tests {
         assert!(ask_yes("Sure?", &mut "Y\n".as_bytes()));
         assert!(!ask_yes("Sure?", &mut "no\n".as_bytes()));
         assert!(!ask_yes("Sure?", &mut "".as_bytes()));
-    }
-
-    #[test]
-    fn typo_messages_include_the_suggestion() {
-        let error = ParseError::Unknown {
-            suggestion: Some("show files"),
-        };
-        assert!(explain(&error, "shwo files").contains("Did you mean \"show files\"?"));
     }
 }

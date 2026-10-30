@@ -1,19 +1,39 @@
 [package]
 name = "noob-cli"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Anand-Shekhawat/noob-cli"
 description = "A beginner-friendly command line: type plain English like `make folder photos`."
 
-# The program you run is called `noob`, even though the package is `noob-cli`.
+# Noob's engine, shared by both programs below.
+[lib]
+name = "noob_cli"
+path = "src/lib.rs"
+
+# The terminal program: `noob`.
 [[bin]]
 name = "noob"
 path = "src/main.rs"
+
+# The windowed app. It's only built with `--features app`, so the terminal
+# program stays small and quick to build.
+[[bin]]
+name = "noob-app"
+path = "src/app/main.rs"
+required-features = ["app"]
 
 # Only two outside crates; everything else uses Rust's standard library.
 #   rustyline: up-arrow history and Tab completion in the noob> prompt
 #   trash:     `delete` sends things to the Trash instead of erasing them
 [dependencies]
+# Only for the windowed app (draws windows on Mac and Windows).
+eframe = { version = "0.37.0", optional = true }
 rustyline = "19.0.0"
 trash = "5.2.9"
+
+[features]
+app = ["dep:eframe"]
+# For developers only: lets the window save a picture of itself, to check how it looks.
+#   EFRAME_SCREENSHOT_TO=shot.png cargo run --features screenshot --bin noob-app
+screenshot = ["app", "eframe/glow", "eframe/__screenshot"]

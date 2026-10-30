@@ -39,13 +39,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-latest, target: aarch64-apple-darwin }   # Macs with Apple chips
-          - { os: macos-latest, target: x86_64-apple-darwin }    # Macs with Intel chips
-          - { os: windows-latest, target: x86_64-pc-windows-msvc }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          # "app" also builds Noob's window. Linux gets the terminal Noob only, for now.
+          - { os: macos-latest, target: aarch64-apple-darwin, features: app }   # Apple chips
+          - { os: macos-latest, target: x86_64-apple-darwin, features: app }    # Intel chips
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, features: app }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, features: "" }
     runs-on: ${{ matrix.os }}
     env:
       TARGET: ${{ matrix.target }}
+      FEATURES: ${{ matrix.features }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,7 +62,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cargo build --release --locked --target "$TARGET"
+        run: cargo build --release --locked --target "$TARGET" --features "$FEATURES"
 
       - name: Package for Mac and Linux
         if: runner.os != 'Windows'
@@ -72,13 +74,22 @@ jobs:
           tar -czf "$NAME.tar.gz" "$NAME"
           shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
 
+      - name: Package the Mac app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          scripts/make-mac-app.sh "$TARGET" "${TAG#v}"
+          APP_ZIP="Noob-$TAG-$TARGET.zip"
+          ditto -c -k --keepParent "target/$TARGET/release/Noob.app" "$APP_ZIP"
+          shasum -a 256 "$APP_ZIP" > "$APP_ZIP.sha256"
+
       - name: Package for Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $name = "noob-$env:TAG-$env:TARGET"
           New-Item -ItemType Directory $name | Out-Null
-          Copy-Item "target/$env:TARGET/release/noob.exe", README.md, LICENSE $name
+          Copy-Item "target/$env:TARGET/release/noob.exe", "target/$env:TARGET/release/noob-app.exe", assets/noob.ico, README.md, LICENSE $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
           $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
@@ -87,7 +98,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" noob-"$TAG"-"$TARGET".* --repo "$GITHUB_REPOSITORY"
+        run: |
+          shopt -s nullglob # the Mac app's files only exist on Macs
+          gh release upload "$TAG" noob-"$TAG"-"$TARGET".* Noob-"$TAG"-"$TARGET".* --repo "$GITHUB_REPOSITORY"
 
   try-windows-installer:
     name: Install on a fresh Windows PC, the way users will
@@ -110,3 +123,11 @@ jobs:
           Write-Host $shown
           $expected = "Noob " + $env:TAG.TrimStart('v')
           if ($shown -ne $expected) { throw "Expected '$expected' but got '$shown'" }
+      - name: Check the app and its Start menu entry are there
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\noob\noob-app.exe'
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Noob.lnk'
+          if (-not (Test-Path $app)) { throw "noob-app.exe wasn't installed" }
+          if (-not (Test-Path $shortcut)) { throw "The Start menu entry wasn't made" }
+          Write-Host "Found $app and $shortcut"

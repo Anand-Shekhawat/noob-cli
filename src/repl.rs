@@ -12,10 +12,10 @@ use rustyline::error::ReadlineError;
 use rustyline::history::FileHistory;
 use rustyline::{CompletionType, Config, Editor};
 
-use crate::actions;
 use crate::completer::NoobHelper;
 use crate::runner::{self, Outcome};
-use crate::style;
+use noob_cli::actions;
+use noob_cli::style;
 
 const WELCOME: &str = "\
 👋 Welcome to Noob CLI!

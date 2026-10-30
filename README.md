@@ -39,6 +39,26 @@ Then type `noob` to open the `noob>` prompt. Type `help` to see everything, or `
 
 You can also run one phrase straight from your normal terminal: `noob make folder photos`.
 
+## Noob's own window
+
+Noob also comes as an app with its own window and icon: type at the bottom, and
+answers appear above like a chat, in colour. Risky things ask with Yes and No
+buttons, and quick buttons at the top show your files, go back, go home, or show help.
+
+- **Mac**: `brew install --cask anand-shekhawat/tap/noob-app`, or download
+  `Noob-…-apple-darwin.zip` from the [latest release](https://github.com/Anand-Shekhawat/noob-cli/releases/latest)
+  (`aarch64` for Macs with Apple chips, `x86_64` for Intel) and drag `Noob.app` into Applications.
+- **Windows**: the PowerShell installer above also installs the app and adds
+  **Noob** to your Start menu.
+
+Noob isn't signed by Apple yet (that costs money each year), so the first time you
+open it, macOS may say it can't be opened. Go to **System Settings → Privacy &
+Security** and click **Open Anyway** next to Noob. You only need to do this once.
+
+Installing, uninstalling and updating tools open a terminal window, because
+installers sometimes ask for your password, and only a real terminal hands that
+safely to macOS or Windows. Noob never sees it.
+
 ## Installing tools and apps
 
 Noob installs things for you with Homebrew on a Mac and winget on Windows
@@ -137,13 +157,19 @@ Colours switch off automatically when the output isn't a terminal, or when the
 
 | File | Job |
 |---|---|
-| `src/main.rs` | Starts the program: one phrase, or the `noob>` prompt |
+| `src/lib.rs` | Noob's engine as a library, shared by the terminal `noob` and the app |
+| `src/engine.rs` | Runs one line: understand, check, ask, do it, and describe what happened |
+| `src/main.rs` | The terminal `noob`: one phrase, or the `noob>` prompt |
+| `src/app/` | Noob's window (`--features app`): `main.rs` starts it, `view.rs` draws it |
+| `src/chat.rs` | The window's conversation and Yes/No questions, with no window code (so it's tested) |
+| `src/terminal.rs` | Opens a terminal window for installers |
+| `src/complete.rs` | Tab completion, used by both |
 | `src/table.rs` | **The command table**: every phrase, example and help line, written once |
 | `src/parser.rs` | Turns your words (and "quoted names") into a `Command` |
 | `src/command.rs` | The list of commands, and their real terminal versions |
-| `src/runner.rs` | Runs one line: understand, check, ask, do it, print |
+| `src/runner.rs` | The terminal's side of running a line: asks from the keyboard, prints in colour |
 | `src/repl.rs` | The `noob>` prompt, history and keys (uses `rustyline`) |
-| `src/completer.rs` | Tab completion |
+| `src/completer.rs` | Connects Tab completion to the terminal's keyboard handling |
 | `src/suggest.rs` | "Did you mean...?" |
 | `src/help.rs` | `help` and `help <command>`, built from the table |
 | `src/style.rs` | Colours |
@@ -169,13 +195,15 @@ The table tests check that your example really runs your command.
    GitHub builds Noob for Mac (Apple chip and Intel), Windows and Linux, attaches
    the downloads to a Release, and tries the Windows installer on a fresh PC.
 3. Update the Homebrew tap:
-   `scripts/homebrew-formula.sh v0.3.0 > ../homebrew-tap/Formula/noob.rb`, then commit
+   `scripts/homebrew-formula.sh v0.4.0 > ../homebrew-tap/Formula/noob.rb` and
+   `scripts/homebrew-cask.sh v0.4.0 > ../homebrew-tap/Casks/noob-app.rb`, then commit
    and push the tap.
 
 ## Checks
 
 ```bash
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo run --features app --bin noob-app   # try Noob's window
+cargo test --features app
+cargo clippy --all-targets --features app -- -D warnings
 cargo fmt --check
 ```

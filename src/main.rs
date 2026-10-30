@@ -4,18 +4,11 @@
 //!   noob make folder photos     run one phrase and finish
 //!   noob                        open the noob> prompt and type many phrases
 
-mod actions;
-mod command;
+// The engine lives in the `noob_cli` library (src/lib.rs). These are just the
+// terminal's own parts.
 mod completer;
-mod help;
-mod parser;
-mod real;
 mod repl;
 mod runner;
-mod style;
-mod suggest;
-mod table;
-mod tools;
 
 use std::env;
 use std::process::ExitCode;
@@ -34,8 +27,21 @@ fn main() -> ExitCode {
         return repl::run();
     }
 
+    // Noob's window opens a terminal with `noob --pause-at-end install git`, so the
+    // window waits for Enter before closing, and you can read what happened.
+    let pause = words.first().map(String::as_str) == Some(noob_cli::terminal::PAUSE_FLAG);
+    let words = if pause { &words[1..] } else { &words[..] };
+    let outcome = runner::run_words(words);
+    if pause {
+        println!(
+            "
+Press Enter to close this window."
+        );
+        let mut enter = String::new();
+        let _ = std::io::stdin().read_line(&mut enter); // any answer (or none) closes it
+    }
     // A failure exit code lets scripts know something went wrong.
-    match runner::run_words(&words) {
+    match outcome {
         Outcome::Failed => ExitCode::FAILURE,
         Outcome::Done | Outcome::Quit => ExitCode::SUCCESS,
     }
