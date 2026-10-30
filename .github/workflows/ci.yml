@@ -32,8 +32,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --check
 
-      - name: Lint
+      - name: Lint (terminal Noob on its own)
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Lint (with Noob's window)
+        run: cargo clippy --all-targets --features app -- -D warnings
+
       - name: Test
-        run: cargo test
+        run: cargo test --features app

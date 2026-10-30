@@ -46,8 +46,11 @@ try {
     Expand-Archive $zip -DestinationPath $temp
     $installDir = Join-Path $env:LOCALAPPDATA 'Programs\noob'
     New-Item -ItemType Directory -Force $installDir | Out-Null
-    $exe = Get-ChildItem $temp -Recurse -Filter 'noob.exe' | Select-Object -First 1
-    Copy-Item $exe.FullName $installDir -Force
+    # noob.exe (the terminal Noob), noob-app.exe (Noob's window) and its icon.
+    foreach ($name in @('noob.exe', 'noob-app.exe', 'noob.ico')) {
+        $file = Get-ChildItem $temp -Recurse -Filter $name | Select-Object -First 1
+        if ($file) { Copy-Item $file.FullName $installDir -Force }
+    }
 }
 finally {
     Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
@@ -63,4 +66,17 @@ if (($userPath -split ';') -notcontains $installDir) {
     Write-Host "Added $installDir to your PATH."
 }
 
-Write-Host "Noob $($release.tag_name) is installed. Open a new terminal window and type: noob" -ForegroundColor Green
+# A Start menu entry for Noob's window, with its icon.
+$app = Join-Path $installDir 'noob-app.exe'
+if (Test-Path $app) {
+    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Noob.lnk'
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+    $link.TargetPath = $app
+    $link.WorkingDirectory = $env:USERPROFILE
+    $link.IconLocation = Join-Path $installDir 'noob.ico'
+    $link.Description = 'Noob: a friendly command line'
+    $link.Save()
+    Write-Host 'Added Noob to your Start menu.'
+}
+
+Write-Host "Noob $($release.tag_name) is installed. Open it from the Start menu, or type noob in a new terminal window." -ForegroundColor Green
