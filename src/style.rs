@@ -8,6 +8,14 @@
 
 use std::io::{self, IsTerminal};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Noob's window draws its own colours, so it switches these codes off.
+static TURNED_OFF: AtomicBool = AtomicBool::new(false);
+
+pub fn turn_off() {
+    TURNED_OFF.store(true, Ordering::Relaxed);
+}
 
 fn colour_allowed() -> bool {
     let no_color = std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
@@ -35,7 +43,7 @@ fn error_output_has_colour() -> bool {
 }
 
 fn paint(code: &str, text: &str, on: bool) -> String {
-    if on {
+    if on && !TURNED_OFF.load(Ordering::Relaxed) {
         format!("\x1b[{code}m{text}\x1b[0m")
     } else {
         text.to_string()
