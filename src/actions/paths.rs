@@ -74,7 +74,7 @@ fn short_with_home(path: &Path, home: Option<&Path>) -> String {
     // `strip_prefix` compares whole folder names, so "/Users/samantha" doesn't match "/Users/sam".
     match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
         None => path.display().to_string(),
     }
 }
@@ -105,6 +105,7 @@ pub(super) fn same_thing(_a: &Path, _b: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(unix)] // these example paths are written the Mac way
     #[test]
     fn shows_the_home_folder_as_a_squiggle() {
         let home = Path::new("/Users/sam");
@@ -120,6 +121,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_bare_name_lives_in_the_current_folder() {
         assert_eq!(folder_of(Path::new("a.txt")), Path::new("."));

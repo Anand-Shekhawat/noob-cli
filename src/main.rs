@@ -9,6 +9,7 @@ mod command;
 mod completer;
 mod help;
 mod parser;
+mod real;
 mod repl;
 mod runner;
 mod style;

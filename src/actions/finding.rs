@@ -184,8 +184,12 @@ mod tests {
             result.starts_with("Found 2 things called \"cat\":"),
             "{result}"
         );
-        assert!(result.contains("📁 pets/cats/"));
-        assert!(result.contains("📄 pets/cats/Cat.jpg"));
+        let cats = Path::new("pets").join("cats");
+        assert!(
+            result.contains(&format!("📁 {}/", cats.display())),
+            "{result}"
+        );
+        assert!(result.contains(&format!("📄 {}", cats.join("Cat.jpg").display())));
         assert!(!result.contains("secret"), "hidden files stay hidden");
     }
 

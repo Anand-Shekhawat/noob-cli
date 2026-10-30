@@ -419,7 +419,8 @@ mod tests {
         let home = Some(std::path::Path::new("/Users/sam"));
         let expand = |name: &str| expand_home_with(name.to_string(), home);
         assert_eq!(expand("~"), "/Users/sam");
-        assert_eq!(expand("~/photos"), "/Users/sam/photos");
+        let photos = std::path::Path::new("/Users/sam").join("photos");
+        assert_eq!(expand("~/photos"), photos.display().to_string());
         assert_eq!(expand("~bob"), "~bob", "only ~ on its own or ~/ means home");
         assert_eq!(expand("a~b"), "a~b");
     }

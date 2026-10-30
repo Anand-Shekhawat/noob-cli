@@ -66,7 +66,7 @@ mod tests {
     fn explains_one_command_with_its_real_command_and_other_names() {
         let help = about("make dir").unwrap();
         assert!(help.starts_with("make folder: make a new folder"));
-        assert!(help.contains("Real command:  mkdir -p photos"));
+        assert!(help.contains("Real command:  mkdir"));
         assert!(help.contains("Also works:    make dir, new folder, create folder"));
     }
 

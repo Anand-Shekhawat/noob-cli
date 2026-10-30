@@ -147,7 +147,9 @@ pub(super) fn check_delete(name: &str) -> Result<(), ActionError> {
     }
     // If a full path can't be worked out, there's nothing to compare, and the checks
     // above have already made sure the thing exists and isn't ".", ".." or "/".
-    let here = env::current_dir().ok();
+    // Both sides go through `canonicalize`, so they're written the same way
+    // (Windows can write one full path in two different styles).
+    let here = env::current_dir().and_then(fs::canonicalize).ok();
     let home = env::home_dir().and_then(|home| fs::canonicalize(home).ok());
     if let Ok(full) = fs::canonicalize(path)
         && is_precious(&full, here.as_deref(), home.as_deref())
@@ -177,14 +179,24 @@ pub(super) fn delete_question(name: &str) -> String {
         },
         _ => format!("\"{name}\""),
     };
-    format!("Move {what} to the Trash?")
+    format!("Move {what} to the {}?", bin_name())
+}
+
+/// What this computer calls the place deleted things go.
+fn bin_name() -> &'static str {
+    if cfg!(windows) {
+        "Recycle Bin"
+    } else {
+        "Trash"
+    }
 }
 
 pub(super) fn delete(name: &str) -> Result<Reply, ActionError> {
     check_delete(name)?;
     send_to_trash(Path::new(name))?;
     Ok(Reply::Done(format!(
-        "Moved \"{name}\" to the Trash. (Changed your mind? You can get it back from there.)"
+        "Moved \"{name}\" to the {}. (Changed your mind? You can get it back from there.)",
+        bin_name()
     )))
 }
 
@@ -192,7 +204,8 @@ pub(super) fn delete(name: &str) -> Result<Reply, ActionError> {
 fn send_to_trash(path: &Path) -> Result<(), ActionError> {
     trash_bin().delete(path).map_err(|error| {
         ActionError::Explained(format!(
-            "I couldn't move it to the Trash, so nothing was deleted. ({error})"
+            "I couldn't move it to the {}, so nothing was deleted. ({error})",
+            bin_name()
         ))
     })
 }
