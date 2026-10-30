@@ -101,11 +101,11 @@ pub(super) fn same_thing(_a: &Path, _b: &Path) -> bool {
     false
 }
 
-#[cfg(test)]
+// These example paths are written the Mac way, so they only run on Mac and Linux.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)] // these example paths are written the Mac way
     #[test]
     fn shows_the_home_folder_as_a_squiggle() {
         let home = Path::new("/Users/sam");
@@ -121,7 +121,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_bare_name_lives_in_the_current_folder() {
         assert_eq!(folder_of(Path::new("a.txt")), Path::new("."));

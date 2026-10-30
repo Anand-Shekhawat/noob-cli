@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::command::{Command, opener};
+use crate::tools::{self, system::Os};
 
 pub(super) fn real(command: &Command) -> Option<String> {
     let text = match command {
@@ -49,7 +50,14 @@ pub(super) fn real(command: &Command) -> Option<String> {
             format!("grep -rni -e {} {}", quote_text(text), quote(place))
         }
         Command::Clear => "clear".to_string(),
-        Command::Help(_) | Command::Bye => return None,
+        Command::Install(_)
+        | Command::Uninstall(_)
+        | Command::UpdateAll
+        | Command::ShowTools
+        | Command::ShowInstalled
+        | Command::IsInstalled(_)
+        | Command::SearchTools(_) => return tools::real_command(command, Os::Mac),
+        Command::Help(_) | Command::Version | Command::Bye => return None,
     };
     Some(text)
 }

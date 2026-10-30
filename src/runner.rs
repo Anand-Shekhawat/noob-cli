@@ -73,7 +73,8 @@ fn run(parsed: Result<Command, ParseError>, typed: &str, in_prompt: bool) -> Out
 
     // Worked out before running: after a delete or move, the thing it describes is gone.
     let real = command.real_command();
-    match actions::execute(&command) {
+    let mut ask = |question: &str| ask_yes(question, &mut io::stdin().lock());
+    match actions::execute(&command, &mut ask) {
         Ok(Reply::Done(message)) => println!("{}", style::success(&format!("✓ {message}"))),
         Ok(Reply::Show(text)) => println!("{text}"),
         Err(error) => {

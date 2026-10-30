@@ -15,6 +15,7 @@ mod runner;
 mod style;
 mod suggest;
 mod table;
+mod tools;
 
 use std::env;
 use std::process::ExitCode;

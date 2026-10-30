@@ -52,7 +52,16 @@ pub enum Command {
         text: String,
         place: String,
     },
+    // Installing tools
+    Install(String),
+    Uninstall(String),
+    UpdateAll,
+    ShowTools,
+    ShowInstalled,
+    IsInstalled(String),
+    SearchTools(String),
     // Other
+    Version,
     Clear,
     /// `help` on its own, or `help copy` for one command.
     Help(Option<String>),

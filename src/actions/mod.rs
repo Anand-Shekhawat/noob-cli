@@ -51,7 +51,12 @@ pub fn check_ready(command: &Command) -> Result<(), ActionError> {
 }
 
 /// Runs one command.
-pub fn execute(command: &Command) -> Result<Reply, ActionError> {
+/// Runs one command. `ask` puts a yes/no question on screen, for commands that need
+/// to ask in the middle of their work (like install).
+pub fn execute(command: &Command, ask: &mut dyn FnMut(&str) -> bool) -> Result<Reply, ActionError> {
+    if crate::tools::is_tool_command(command) {
+        return crate::tools::run(command, ask);
+    }
     match command {
         Command::WhereAmI => navigate::where_am_i(),
         Command::GoInto(name) => navigate::go_into(name),
@@ -79,7 +84,18 @@ pub fn execute(command: &Command) -> Result<Reply, ActionError> {
         Command::Help(Some(topic)) => help::about(topic)
             .map(Reply::Show)
             .ok_or_else(|| ActionError::NoHelp(topic.clone())),
+        Command::Version => Ok(Reply::Show(format!("Noob {}", env!("CARGO_PKG_VERSION")))),
         Command::Bye => Ok(Reply::Show("Bye! See you next time.".to_string())),
+        // Handled by `tools` above.
+        Command::Install(_)
+        | Command::Uninstall(_)
+        | Command::UpdateAll
+        | Command::ShowTools
+        | Command::ShowInstalled
+        | Command::IsInstalled(_)
+        | Command::SearchTools(_) => {
+            Err(ActionError::Explained("That's a tool command.".to_string()))
+        }
     }
 }
 

@@ -138,6 +138,12 @@ fn names_for(spec: &Spec, rest: &[Token]) -> Result<Vec<String>, ParseError> {
         }),
         Shape::One => join(rest).map(|name| vec![name]).ok_or_else(missing),
         Shape::Optional => Ok(join(rest).into_iter().collect()),
+        Shape::Ending(last) => match rest.split_last() {
+            Some((final_word, name)) if final_word.keyword().as_deref() == Some(last) => {
+                join(name).map(|name| vec![name]).ok_or_else(missing)
+            }
+            _ => Err(missing()),
+        },
         Shape::Two { joiners } => {
             let joiner_at = rest
                 .iter()
