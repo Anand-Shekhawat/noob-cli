@@ -11,12 +11,14 @@ pub mod system;
 #[cfg(test)]
 mod tests;
 
+use std::path::{Path, PathBuf};
+
 use catalog::{Group, TOOLS, Tool};
 use package::{Manager, Package};
 use system::{Os, RealSystem, System};
 
 use crate::actions::{ActionError, Reply};
-use crate::command::Command;
+use crate::command::ToolCommand;
 
 /// How Noob asks "are you sure?". The runner passes in a real question on screen;
 /// tests pass in a pretend answer.
@@ -24,36 +26,22 @@ pub type Ask<'a> = &'a mut dyn FnMut(&str) -> bool;
 
 /// Most search results shown at once.
 const MAX_RESULTS: usize = 20;
+/// Where Mac apps live.
+const APPLICATIONS: &str = "/Applications";
 
-pub fn is_tool_command(command: &Command) -> bool {
-    matches!(
-        command,
-        Command::Install(_)
-            | Command::Uninstall(_)
-            | Command::UpdateAll
-            | Command::ShowTools
-            | Command::ShowInstalled
-            | Command::IsInstalled(_)
-            | Command::SearchTools(_)
-    )
-}
-
-pub fn run(command: &Command, ask: Ask) -> Result<Reply, ActionError> {
+pub fn run(command: &ToolCommand, ask: Ask) -> Result<Reply, ActionError> {
     run_on(command, &RealSystem, ask)
 }
 
-fn run_on(command: &Command, system: &dyn System, ask: Ask) -> Result<Reply, ActionError> {
+fn run_on(command: &ToolCommand, system: &dyn System, ask: Ask) -> Result<Reply, ActionError> {
     match command {
-        Command::Install(name) => install(name, system, ask),
-        Command::Uninstall(name) => uninstall(name, system, ask),
-        Command::UpdateAll => update_all(system, ask),
-        Command::ShowTools => Ok(show_tools(system.os())),
-        Command::ShowInstalled => show_installed(system),
-        Command::IsInstalled(name) => is_installed(name, system),
-        Command::SearchTools(text) => search_tools(text, system),
-        _ => Err(ActionError::Explained(
-            "That isn't a tool command.".to_string(),
-        )),
+        ToolCommand::Install(name) => install(name, system, ask),
+        ToolCommand::Uninstall(name) => uninstall(name, system, ask),
+        ToolCommand::UpdateAll => update_all(system, ask),
+        ToolCommand::ShowTools => Ok(show_tools(system.os())),
+        ToolCommand::ShowInstalled => show_installed(system),
+        ToolCommand::IsInstalled(name) => is_installed(name, system),
+        ToolCommand::SearchTools(text) => search_tools(text, system),
     }
 }
 
@@ -65,6 +53,12 @@ struct Choice {
     tool: Option<&'static Tool>,
 }
 
+impl Choice {
+    fn is_homebrew(&self) -> bool {
+        self.tool.is_some_and(|tool| tool.main_name() == "homebrew")
+    }
+}
+
 fn install(name: &str, system: &dyn System, ask: Ask) -> Result<Reply, ActionError> {
     let Some(choice) = choose(name, system)? else {
         return suggestions(name, system);
@@ -74,11 +68,8 @@ fn install(name: &str, system: &dyn System, ask: Ask) -> Result<Reply, ActionErr
         .needs_manager()
         .then(|| package::manager(system))
         .transpose()?;
-    if already_installed(&choice, manager.as_ref(), system) {
-        return Ok(Reply::Show(format!(
-            "{} is already installed. To get the newest version, type: update everything",
-            choice.title
-        )));
+    if let Some(already) = already_installed(&choice, manager.as_ref(), system) {
+        return Ok(Reply::Show(already));
     }
     let question = format!(
         "Install {} ({}) {}? It can take a few minutes.",
@@ -96,20 +87,25 @@ fn install(name: &str, system: &dyn System, ask: Ask) -> Result<Reply, ActionErr
         &choice.package.install_args(),
     )?;
 
-    let mut message = vec![format!("Installed {}.", choice.title)];
-    if choice.package == Package::XcodeTools {
-        message = vec![
-            "A window should open: click Install there, then wait for it to finish.".to_string(),
-        ];
-    }
-    if let Some(tip) = choice.tool.and_then(|tool| tool.after) {
-        message.push(tip.to_string());
-    }
-    if choice
-        .tool
-        .is_some_and(|tool| tool.main_name() == "homebrew")
+    // Official scripts can finish "successfully" without installing anything (with no
+    // internet, the download is just empty), so check before saying it worked.
+    if matches!(choice.package, Package::Script(_))
+        && already_installed(&choice, None, system).is_none()
     {
-        message.push(setup::after_homebrew(system, ask)?);
+        return Err(ActionError::Explained(format!(
+            "The installer finished, but I can't find {} afterwards. Check your internet \
+             connection and the messages above, then try again.",
+            choice.title
+        )));
+    }
+    let mut message = vec![if choice.package == Package::XcodeTools {
+        "A window should open: click Install there, then wait for it to finish.".to_string()
+    } else {
+        format!("Installed {}.", choice.title)
+    }];
+    message.extend(choice.tool.and_then(|tool| tool.after).map(str::to_string));
+    if choice.is_homebrew() {
+        message.push(setup::after_homebrew(system, ask));
     }
     Ok(Reply::Done(message.join(" ").trim().to_string()))
 }
@@ -126,20 +122,26 @@ fn choose(name: &str, system: &dyn System) -> Result<Option<Choice>, ActionError
             tool: Some(tool),
         }));
     }
-    if !package::valid_name(name) {
-        return Err(ActionError::Explained(format!(
-            "\"{name}\" doesn't look like a tool name. To see what's available, type: show tools"
-        )));
-    }
+    check_name(name)?;
     let manager = package::manager(system)?;
     Ok(
         package::exact_package(name, &manager, system).map(|package| Choice {
             title: name.to_string(),
-            about: format!("from {}'s catalog", manager.name()),
+            about: format!("from {}'s own catalog", manager.name()),
             package,
             tool: None,
         }),
     )
+}
+
+fn check_name(name: &str) -> Result<(), ActionError> {
+    if package::valid_name(name) {
+        Ok(())
+    } else {
+        Err(ActionError::Explained(format!(
+            "\"{name}\" doesn't look like a tool name. To see what's available, type: show tools"
+        )))
+    }
 }
 
 /// "with Homebrew", or "with its official installer".
@@ -152,23 +154,73 @@ fn from(package: &Package) -> &'static str {
     }
 }
 
-fn already_installed(choice: &Choice, manager: Option<&Manager>, system: &dyn System) -> bool {
-    match (&choice.package, manager) {
-        (Package::XcodeTools, _) => system
-            .ask(std::path::Path::new("/usr/bin/xcode-select"), &["-p"])
-            .is_ok_and(|answer| answer.worked),
-        (Package::Script(_), _) => {
-            let programs = choice.tool.map_or(&[][..], |tool| tool.programs);
-            let is_homebrew = choice
-                .tool
-                .is_some_and(|tool| tool.main_name() == "homebrew");
-            (is_homebrew && package::homebrew_location(system).is_some())
-                || programs
-                    .iter()
-                    .any(|program| system.find(program).is_some())
+/// `Some(message)` if it's installed already, saying how.
+fn already_installed(
+    choice: &Choice,
+    manager: Option<&Manager>,
+    system: &dyn System,
+) -> Option<String> {
+    let title = &choice.title;
+    let newest = "To get the newest version, type: update everything";
+    let found = match &choice.package {
+        Package::XcodeTools => xcode_tools_installed(system),
+        Package::Script(_) if choice.is_homebrew() => package::homebrew_location(system).is_some(),
+        Package::Script(_) => choice.tool.is_some_and(|tool| {
+            tool.programs
+                .iter()
+                .any(|program| find_program(program, system).is_some())
+        }),
+        package => {
+            if manager.is_some_and(|manager| installed_with(package, manager, system)) {
+                return Some(format!("{title} is already installed. {newest}"));
+            }
+            // An app copied into Applications by hand isn't Homebrew's, but it's there.
+            if let Some(app) = mac_app_path(choice.tool, system) {
+                return Some(format!(
+                    "{title} is already on your Mac, at {}.",
+                    app.display()
+                ));
+            }
+            false
         }
-        (package, Some(manager)) => installed_with(package, manager, system),
-        (_, None) => false,
+    };
+    found.then(|| format!("{title} is already installed."))
+}
+
+fn xcode_tools_installed(system: &dyn System) -> bool {
+    system
+        .ask(Path::new("/usr/bin/xcode-select"), &["-p"])
+        .is_ok_and(|answer| answer.worked)
+}
+
+fn mac_app_path(tool: Option<&Tool>, system: &dyn System) -> Option<PathBuf> {
+    let app = Path::new(APPLICATIONS).join(tool?.mac_app?);
+    (system.os() == Os::Mac && system.exists(&app)).then_some(app)
+}
+
+/// A program that's really there: on PATH, or where rustup puts things (~/.cargo/bin),
+/// but not one of the placeholders computers come with.
+fn find_program(program: &str, system: &dyn System) -> Option<PathBuf> {
+    let in_cargo = system
+        .home()
+        .map(|home| home.join(".cargo").join("bin").join(program))
+        .filter(|path| system.exists(path));
+    system
+        .find(program)
+        .filter(|path| !is_placeholder(path, system))
+        .or(in_cargo)
+}
+
+/// Macs come with stand-in `git` and `python3` in /usr/bin that only offer to install
+/// Apple's tools, and Windows has a stand-in `python` that only opens the Store.
+fn is_placeholder(path: &Path, system: &dyn System) -> bool {
+    match system.os() {
+        Os::Mac => path.starts_with("/usr/bin") && !xcode_tools_installed(system),
+        Os::Windows => path
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("windowsapps"),
+        Os::Linux => false,
     }
 }
 
@@ -190,8 +242,8 @@ fn run_installer(
     args: &[String],
 ) -> Result<(), ActionError> {
     let program = match (&choice.package, manager) {
-        (Package::Script(_), _) => std::path::PathBuf::from("/bin/bash"),
-        (Package::XcodeTools, _) => std::path::PathBuf::from("/usr/bin/xcode-select"),
+        (Package::Script(_), _) => PathBuf::from("/bin/bash"),
+        (Package::XcodeTools, _) => PathBuf::from("/usr/bin/xcode-select"),
         (_, Some(manager)) => manager.program().to_path_buf(),
         (_, None) => {
             return Err(ActionError::Explained(
@@ -217,17 +269,16 @@ fn run_installer(
 fn suggestions(name: &str, system: &dyn System) -> Result<Reply, ActionError> {
     let manager = package::manager(system)?;
     let found = package::search(name, &manager, system)?;
-    if found.is_empty() {
+    let Some(first) = found.first() else {
         return Ok(Reply::Show(format!(
             "I couldn't find \"{name}\" in {}. Check the spelling, or type: show tools",
             manager.name()
         )));
-    }
+    };
     Ok(Reply::Show(format!(
-        "I don't know a tool called \"{name}\". {} has these:\n{}\nTo install one, type install and its name, like: install {}",
+        "I don't know a tool called \"{name}\". {} has these:\n{}\nTo install one, type install and its name, like: install {first}",
         manager.name(),
-        listed(&found),
-        found[0]
+        listed(&found)
     )))
 }
 
@@ -357,10 +408,10 @@ fn show_installed(system: &dyn System) -> Result<Reply, ActionError> {
                 or_none(&apps)
             )
         }
-        Manager::Winget(_) => format!(
-            "Installed on this computer:\n{}",
-            quiet(&["list", "--disable-interactivity"])?.trim_end()
-        ),
+        Manager::Winget(_) => {
+            let list = quiet(&["list", "--source", "winget", "--disable-interactivity"])?;
+            format!("Installed with winget:\n{}", plain_text(&list).trim_end())
+        }
     };
     Ok(Reply::Show(text))
 }
@@ -373,13 +424,23 @@ fn or_none(names: &[String]) -> String {
     }
 }
 
+/// Output from another program can contain control characters that would mess up
+/// the screen. Keep only plain text and line breaks.
+fn plain_text(text: &str) -> String {
+    text.lines()
+        .map(|line| line.rsplit('\r').next().unwrap_or(line))
+        .map(|line| line.chars().filter(|c| !c.is_control()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn is_installed(name: &str, system: &dyn System) -> Result<Reply, ActionError> {
     let tool = catalog::find(name);
+    if tool.is_none() {
+        check_name(name)?;
+    }
     let title = tool.map_or(name, |tool| tool.title);
-    let programs: Vec<&str> = match tool {
-        Some(tool) => tool.programs.to_vec(),
-        None => vec![name],
-    };
+    let programs: Vec<&str> = tool.map_or_else(|| vec![name], |tool| tool.programs.to_vec());
     let manager = package::manager(system).ok();
     let package = match tool {
         Some(tool) => Package::for_tool(tool, system.os()).ok(),
@@ -393,7 +454,10 @@ fn is_installed(name: &str, system: &dyn System) -> Result<Reply, ActionError> {
         }
         _ => None,
     };
-    let found = programs.iter().find_map(|program| system.find(program));
+    let found = programs
+        .iter()
+        .find_map(|program| find_program(program, system))
+        .or_else(|| mac_app_path(tool, system));
     let answer = match (by_manager, found) {
         (Some(manager), Some(path)) => format!(
             "Yes, {title} is installed (with {manager}), at {}.",
@@ -410,11 +474,17 @@ fn is_installed(name: &str, system: &dyn System) -> Result<Reply, ActionError> {
 }
 
 fn search_tools(text: &str, system: &dyn System) -> Result<Reply, ActionError> {
+    if !package::valid_search(text) {
+        return Err(ActionError::Explained(format!(
+            "I can't search for \"{text}\". Try a simple word, like: search tools video"
+        )));
+    }
+    let wanted = text.trim().to_lowercase();
     let curated: Vec<String> = TOOLS
         .iter()
         .filter(|tool| {
-            let wanted = text.to_lowercase();
             tool.names.iter().any(|name| name.contains(&wanted))
+                || tool.title.to_lowercase().contains(&wanted)
                 || tool.about.to_lowercase().contains(&wanted)
         })
         .map(|tool| format!("{} ({})", tool.main_name(), tool.title))
@@ -423,12 +493,18 @@ fn search_tools(text: &str, system: &dyn System) -> Result<Reply, ActionError> {
     if !curated.is_empty() {
         lines.push(format!("From Noob's own list:\n{}", listed(&curated)));
     }
-    let manager = package::manager(system)?;
-    if package::valid_name(text) {
-        let found = package::search(text, &manager, system)?;
-        if !found.is_empty() {
-            lines.push(format!("From {}:\n{}", manager.name(), listed(&found)));
+    // Noob's own list still helps when Homebrew or winget isn't there.
+    match package::manager(system) {
+        Ok(manager) => {
+            let found = package::search(text.trim(), &manager, system)?;
+            if !found.is_empty() {
+                lines.push(format!("From {}:\n{}", manager.name(), listed(&found)));
+            }
         }
+        Err(error) if !curated.is_empty() => {
+            lines.push(format!("(I only looked in Noob's own list. {error})"))
+        }
+        Err(error) => return Err(error),
     }
     if lines.is_empty() {
         return Ok(Reply::Show(format!(
@@ -440,10 +516,11 @@ fn search_tools(text: &str, system: &dyn System) -> Result<Reply, ActionError> {
 }
 
 /// The real command for a tool command, for this kind of computer.
-pub fn real_command(command: &Command, os: Os) -> Option<String> {
+pub fn real_command(command: &ToolCommand, os: Os) -> Option<String> {
     let windows = os == Os::Windows;
     let package = |name: &str| match catalog::find(name) {
         Some(tool) => Package::for_tool(tool, os).ok(),
+        None if !package::valid_name(name) => None,
         None if windows => Some(Package::Winget {
             id: name.to_string(),
             extra: Vec::new(),
@@ -451,9 +528,9 @@ pub fn real_command(command: &Command, os: Os) -> Option<String> {
         None => Some(Package::Formula(name.to_string())),
     };
     match command {
-        Command::Install(name) => package(name).map(|package| package.real_install()),
-        Command::Uninstall(name) => package(name).and_then(|package| package.real_uninstall()),
-        Command::UpdateAll => Some(
+        ToolCommand::Install(name) => package(name).map(|package| package.real_install()),
+        ToolCommand::Uninstall(name) => package(name).and_then(|package| package.real_uninstall()),
+        ToolCommand::UpdateAll => Some(
             if windows {
                 "winget upgrade --all"
             } else {
@@ -461,23 +538,36 @@ pub fn real_command(command: &Command, os: Os) -> Option<String> {
             }
             .to_string(),
         ),
-        Command::ShowInstalled => {
+        ToolCommand::ShowInstalled => {
             Some(if windows { "winget list" } else { "brew list" }.to_string())
         }
-        Command::IsInstalled(name) => {
-            let program = catalog::find(name)
-                .and_then(|tool| tool.programs.first().copied())
-                .unwrap_or(name);
-            Some(if windows {
-                format!("Get-Command {program}")
-            } else {
-                format!("which {program}")
-            })
-        }
-        Command::SearchTools(text) => Some(format!(
-            "{} search {text}",
-            if windows { "winget" } else { "brew" }
-        )),
-        _ => None,
+        ToolCommand::IsInstalled(name) => is_installed_command(name, os),
+        ToolCommand::ShowTools => None,
+        ToolCommand::SearchTools(text) => package::valid_search(text)
+            .then(|| format!("{} search \"{}\"", installer(windows), text.trim())),
     }
+}
+
+fn installer(windows: bool) -> &'static str {
+    if windows { "winget" } else { "brew" }
+}
+
+/// Programs are checked with `which` (or `Get-Command`); apps, which aren't programs
+/// you type, are checked with the installer itself.
+fn is_installed_command(name: &str, os: Os) -> Option<String> {
+    let windows = os == Os::Windows;
+    let program = match catalog::find(name) {
+        Some(tool) => tool.programs.first().copied(),
+        None => package::valid_name(name).then_some(name),
+    };
+    if let Some(program) = program {
+        return Some(if windows {
+            format!("Get-Command {program}")
+        } else {
+            format!("which {program}")
+        });
+    }
+    let package = Package::for_tool(catalog::find(name)?, os).ok()?;
+    let args = package.check_args()?;
+    Some(format!("{} {}", installer(windows), args.join(" ")))
 }

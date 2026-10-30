@@ -59,6 +59,9 @@ pub struct Tool {
     pub windows: WindowsSource,
     /// Programs that are there once it's installed (used by `is git installed`).
     pub programs: &'static [&'static str],
+    /// For Mac apps: the app's name in the Applications folder, so Noob can tell
+    /// when it's already there (even if it wasn't installed with Homebrew).
+    pub mac_app: Option<&'static str>,
     /// A tip shown after installing, if there's something left to do.
     pub after: Option<&'static str>,
 }
@@ -91,6 +94,7 @@ pub static TOOLS: &[Tool] = &[
             "Homebrew is for Macs. On Windows, Noob uses winget, which comes with Windows.",
         ),
         programs: &["brew"],
+        mac_app: None,
         after: None,
     },
     Tool {
@@ -104,6 +108,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &["git"],
+        mac_app: None,
         after: None,
     },
     Tool {
@@ -117,6 +122,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &["code"],
+        mac_app: Some("Visual Studio Code.app"),
         after: None,
     },
     Tool {
@@ -130,6 +136,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &["node"],
+        mac_app: None,
         after: None,
     },
     Tool {
@@ -143,6 +150,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &["python3", "python"],
+        mac_app: None,
         after: None,
     },
     // For building software
@@ -157,6 +165,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &["rustup", "cargo"],
+        mac_app: None,
         after: Some(NEW_WINDOW),
     },
     Tool {
@@ -174,6 +183,7 @@ pub static TOOLS: &[Tool] = &[
             ],
         },
         programs: &[],
+        mac_app: None,
         after: None,
     },
     // Everyday apps
@@ -188,6 +198,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &[],
+        mac_app: Some("Google Chrome.app"),
         after: None,
     },
     Tool {
@@ -201,6 +212,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &[],
+        mac_app: Some("Firefox.app"),
         after: None,
     },
     Tool {
@@ -214,6 +226,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &[],
+        mac_app: Some("VLC.app"),
         after: None,
     },
     Tool {
@@ -227,6 +240,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &[],
+        mac_app: Some("zoom.us.app"),
         after: None,
     },
     // Small terminal helpers
@@ -240,6 +254,7 @@ pub static TOOLS: &[Tool] = &[
             "Windows already has tree: in PowerShell, type tree /f (or in Noob: show tree).",
         ),
         programs: &["tree"],
+        mac_app: None,
         after: None,
     },
     Tool {
@@ -253,6 +268,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &["wget"],
+        mac_app: None,
         after: None,
     },
     Tool {
@@ -266,6 +282,7 @@ pub static TOOLS: &[Tool] = &[
             extra: &[],
         },
         programs: &["jq"],
+        mac_app: None,
         after: None,
     },
     Tool {
@@ -278,6 +295,7 @@ pub static TOOLS: &[Tool] = &[
             "htop isn't made for Windows. Task Manager (Ctrl+Shift+Esc) shows the same things.",
         ),
         programs: &["htop"],
+        mac_app: None,
         after: None,
     },
 ];

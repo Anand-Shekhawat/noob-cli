@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::system::{Answer, Os, System};
 use super::*;
+use crate::command::ToolCommand;
 
 struct FakeSystem {
     os: Os,
@@ -132,7 +133,9 @@ fn install(
     system: &FakeSystem,
     answer: fn(&str) -> bool,
 ) -> Result<Reply, ActionError> {
-    run_on(&Command::Install(name.to_string()), system, &mut { answer })
+    run_on(&ToolCommand::Install(name.to_string()), system, &mut {
+        answer
+    })
 }
 
 fn text(reply: Result<Reply, ActionError>) -> String {
@@ -155,7 +158,7 @@ fn the_question_says_what_and_where_from() {
     let mac = FakeSystem::mac();
     let mut asked = String::new();
     run_on(
-        &Command::Install("git".to_string()),
+        &ToolCommand::Install("git".to_string()),
         &mac,
         &mut |question: &str| {
             asked = question.to_string();
@@ -246,7 +249,12 @@ fn says_what_to_use_when_a_tool_is_not_for_this_computer() {
 
 #[test]
 fn rust_on_a_mac_uses_its_official_installer_without_homebrew() {
-    let mac = FakeSystem::mac_without_homebrew();
+    // rustup puts its programs in ~/.cargo/bin, which a new terminal window finds.
+    let mac = FakeSystem {
+        home: Some(PathBuf::from("/Users/sam")),
+        appear_after_run: vec![PathBuf::from("/Users/sam/.cargo/bin/rustup")],
+        ..FakeSystem::mac_without_homebrew()
+    };
     let reply = install("rust", &mac, yes);
     assert_eq!(
         mac.ran(),
@@ -303,7 +311,7 @@ fn installing_homebrew_runs_the_official_script_and_offers_to_set_up_the_termina
     assert!(reply.contains("Open a new terminal window"), "{reply}");
 
     // Asking again doesn't add the line twice.
-    setup::after_homebrew(&mac, &mut yes).unwrap();
+    setup::after_homebrew(&mac, &mut yes);
     let again = std::fs::read_to_string(home.join(".zprofile")).unwrap();
     assert_eq!(again.matches("shellenv").count(), 1);
     let _ = std::fs::remove_dir_all(&home);
@@ -319,12 +327,12 @@ fn homebrew_is_not_installed_twice() {
 #[test]
 fn uninstalls_only_what_is_installed() {
     let mac = FakeSystem::mac().answering("list --cask vlc", true, "vlc");
-    run_on(&Command::Uninstall("vlc".to_string()), &mac, &mut yes).unwrap();
+    run_on(&ToolCommand::Uninstall("vlc".to_string()), &mac, &mut yes).unwrap();
     assert_eq!(mac.ran(), vec!["brew uninstall --cask vlc"]);
 
     let empty = FakeSystem::mac();
     let shown = text(run_on(
-        &Command::Uninstall("vlc".to_string()),
+        &ToolCommand::Uninstall("vlc".to_string()),
         &empty,
         &mut yes,
     ));
@@ -335,11 +343,11 @@ fn uninstalls_only_what_is_installed() {
 #[test]
 fn update_everything_fetches_then_upgrades() {
     let mac = FakeSystem::mac();
-    run_on(&Command::UpdateAll, &mac, &mut yes).unwrap();
+    run_on(&ToolCommand::UpdateAll, &mac, &mut yes).unwrap();
     assert_eq!(mac.ran(), vec!["brew update", "brew upgrade"]);
 
     let windows = FakeSystem::windows();
-    run_on(&Command::UpdateAll, &windows, &mut yes).unwrap();
+    run_on(&ToolCommand::UpdateAll, &windows, &mut yes).unwrap();
     assert_eq!(windows.ran(), vec!["winget upgrade --all --source winget"]);
 }
 
@@ -354,7 +362,7 @@ fn is_installed_says_how_and_where() {
     }
     .answering("list --formula git", true, "git");
     let yes_answer = text(run_on(
-        &Command::IsInstalled("git".to_string()),
+        &ToolCommand::IsInstalled("git".to_string()),
         &mac,
         &mut yes,
     ));
@@ -364,7 +372,7 @@ fn is_installed_says_how_and_where() {
     );
 
     let no_answer = text(run_on(
-        &Command::IsInstalled("jq".to_string()),
+        &ToolCommand::IsInstalled("jq".to_string()),
         &mac,
         &mut yes,
     ));
@@ -377,7 +385,7 @@ fn is_installed_says_how_and_where() {
 #[test]
 fn show_tools_lists_every_group_and_marks_what_this_computer_cannot_have() {
     let shown = text(run_on(
-        &Command::ShowTools,
+        &ToolCommand::ShowTools,
         &FakeSystem::windows(),
         &mut yes,
     ));
@@ -410,7 +418,7 @@ fn reads_winget_search_tables() {
 
 #[test]
 fn real_commands_match_the_computer() {
-    let install = Command::Install("vscode".to_string());
+    let install = ToolCommand::Install("vscode".to_string());
     assert_eq!(
         real_command(&install, Os::Mac).unwrap(),
         "brew install --cask visual-studio-code"
@@ -420,7 +428,157 @@ fn real_commands_match_the_computer() {
         "winget install --id Microsoft.VisualStudioCode --exact --source winget"
     );
     assert_eq!(
-        real_command(&Command::UpdateAll, Os::Mac).unwrap(),
+        real_command(&ToolCommand::UpdateAll, Os::Mac).unwrap(),
         "brew update && brew upgrade"
+    );
+}
+
+#[test]
+fn names_with_a_slash_are_refused_because_they_add_someone_elses_source() {
+    let mac = FakeSystem::mac().answering("info --formula", true, "");
+    assert!(text(install("someone/tap/tool", &mac, yes)).contains("doesn't look like a tool name"));
+    assert!(text(install(".hidden", &mac, yes)).contains("doesn't look like a tool name"));
+    assert!(mac.ran().is_empty());
+}
+
+#[test]
+fn an_app_already_in_applications_counts_as_installed() {
+    let mac = FakeSystem::mac();
+    mac.files
+        .borrow_mut()
+        .push(PathBuf::from("/Applications/VLC.app"));
+    let shown = text(install("vlc", &mac, yes));
+    assert_eq!(
+        shown,
+        "VLC is already on your Mac, at /Applications/VLC.app."
+    );
+    assert!(mac.ran().is_empty());
+}
+
+#[test]
+fn an_installer_script_that_installed_nothing_is_not_called_a_success() {
+    // With no internet, Homebrew's script downloads nothing and still "succeeds".
+    let mac = FakeSystem::mac_without_homebrew();
+    let shown = text(install("homebrew", &mac, yes));
+    assert!(
+        shown.contains("I can't find Homebrew afterwards"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn placeholder_programs_do_not_count_as_installed() {
+    // Before Apple's tools are installed, /usr/bin/git only offers to install them.
+    let mac = FakeSystem {
+        programs: vec![
+            ("brew", PathBuf::from("/opt/homebrew/bin/brew")),
+            ("git", PathBuf::from("/usr/bin/git")),
+        ],
+        ..FakeSystem::mac()
+    };
+    let shown = text(run_on(
+        &ToolCommand::IsInstalled("git".to_string()),
+        &mac,
+        &mut yes,
+    ));
+    assert!(shown.starts_with("No, Git isn't installed."), "{shown}");
+
+    // Windows' python in WindowsApps only opens the Store.
+    let windows = FakeSystem {
+        programs: vec![
+            ("winget", PathBuf::from("C:/winget.exe")),
+            (
+                "python",
+                PathBuf::from("C:/Users/sam/AppData/Local/Microsoft/WindowsApps/python.exe"),
+            ),
+        ],
+        ..FakeSystem::windows()
+    };
+    let shown = text(run_on(
+        &ToolCommand::IsInstalled("python".to_string()),
+        &windows,
+        &mut yes,
+    ));
+    assert!(shown.starts_with("No, Python isn't installed."), "{shown}");
+}
+
+#[test]
+fn saying_no_to_the_settings_change_explains_how_to_do_it_later() {
+    let home = std::env::temp_dir().join(format!("noob-brew-no-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    let mac = FakeSystem {
+        home: Some(home.clone()),
+        ..FakeSystem::mac_without_homebrew()
+    };
+    mac.files
+        .borrow_mut()
+        .push(PathBuf::from("/opt/homebrew/bin/brew"));
+
+    let advice = setup::after_homebrew(&mac, &mut no);
+    assert!(advice.starts_with("To set it up yourself"), "{advice}");
+    assert!(!home.join(".zprofile").exists(), "nothing was changed");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn windows_uninstalls_with_winget() {
+    let windows = FakeSystem::windows().answering("list --id VideoLAN.VLC", true, "VLC");
+    run_on(
+        &ToolCommand::Uninstall("vlc".to_string()),
+        &windows,
+        &mut yes,
+    )
+    .unwrap();
+    assert_eq!(
+        windows.ran(),
+        vec!["winget uninstall --id VideoLAN.VLC --exact --source winget"]
+    );
+}
+
+#[test]
+fn mac_apps_are_not_offered_on_linux() {
+    let linux = FakeSystem {
+        os: Os::Linux,
+        ..FakeSystem::mac()
+    };
+    assert!(text(install("chrome", &linux, yes)).contains("Mac app"));
+    assert!(linux.ran().is_empty());
+}
+
+#[test]
+fn search_still_shows_noobs_own_list_without_homebrew() {
+    let mac = FakeSystem::mac_without_homebrew();
+    let shown = text(run_on(
+        &ToolCommand::SearchTools("video".to_string()),
+        &mac,
+        &mut yes,
+    ));
+    assert!(shown.contains("vlc (VLC)"), "{shown}");
+    assert!(shown.contains("install homebrew"), "{shown}");
+}
+
+#[test]
+fn winget_table_footers_are_not_mistaken_for_ids() {
+    let table = concat!(
+        "Name  Id             Version Source\n",
+        "-----------------------------------\n",
+        "Jq    jqlang.jq      1.7.1   winget\n",
+        "2 upgrades available.\n",
+    );
+    assert_eq!(package::winget_ids(table), vec!["jqlang.jq"]);
+}
+
+#[test]
+fn the_real_command_for_checking_an_app_uses_the_installer() {
+    let check = ToolCommand::IsInstalled("chrome".to_string());
+    assert_eq!(
+        real_command(&check, Os::Mac).unwrap(),
+        "brew list --cask google-chrome"
+    );
+    let program = ToolCommand::IsInstalled("git".to_string());
+    assert_eq!(
+        real_command(&program, Os::Windows).unwrap(),
+        "Get-Command git"
     );
 }

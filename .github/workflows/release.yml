@@ -1,27 +1,40 @@
 # Builds Noob for Mac, Windows and Linux whenever a version tag (like v0.3.0) is pushed,
 # and attaches the downloads to a GitHub Release.
+#
+# Safety notes:
+# - Each job gets only the permissions it needs.
+# - actions/checkout is pinned to an exact commit, so nobody can change what it runs.
+# - The tag name reaches commands through the TAG variable, never pasted into them.
 name: Release
 
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write # needed to create the Release and upload files to it
+permissions: {}
+
+env:
+  TAG: ${{ github.ref_name }}
 
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the Release
     steps:
-      - uses: actions/checkout@v4
+      - name: Check the tag looks like a version
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Not a version tag: $TAG"; exit 1; }
       - name: Make an empty Release for this tag
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" --title "Noob ${{ github.ref_name }}" --generate-notes
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Noob $TAG" --generate-notes
 
   build:
     name: Build for ${{ matrix.target }}
     needs: create-release
+    permissions:
+      contents: write # to upload the downloads
     strategy:
       fail-fast: false
       matrix:
@@ -32,25 +45,30 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
     runs-on: ${{ matrix.os }}
     env:
-      NAME: noob-${{ github.ref_name }}-${{ matrix.target }}
+      TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Use stable Rust for this target
+        shell: bash
         run: |
           rustup update stable
           rustup default stable
-          rustup target add ${{ matrix.target }}
+          rustup target add "$TARGET"
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        shell: bash
+        run: cargo build --release --locked --target "$TARGET"
 
       - name: Package for Mac and Linux
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          NAME="noob-$TAG-$TARGET"
           mkdir "$NAME"
-          cp "target/${{ matrix.target }}/release/noob" README.md "$NAME/"
+          cp "target/$TARGET/release/noob" README.md LICENSE "$NAME/"
           tar -czf "$NAME.tar.gz" "$NAME"
           shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
 
@@ -58,31 +76,37 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory $env:NAME | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/noob.exe", README.md $env:NAME
-          Compress-Archive -Path $env:NAME -DestinationPath "$env:NAME.zip"
-          $hash = (Get-FileHash "$env:NAME.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $env:NAME.zip" | Out-File -Encoding ascii "$env:NAME.zip.sha256"
+          $name = "noob-$env:TAG-$env:TARGET"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item "target/$env:TARGET/release/noob.exe", README.md, LICENSE $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
 
       - name: Upload to the Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.ref_name }}" "$NAME".* --clobber
+        run: gh release upload "$TAG" noob-"$TAG"-"$TARGET".* --repo "$GITHUB_REPOSITORY"
 
   try-windows-installer:
     name: Install on a fresh Windows PC, the way users will
     needs: build
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Run the one-line installer
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the installer for this exact version
         shell: pwsh
-        run: ./scripts/install.ps1
-      - name: Check Noob runs
+        run: ./scripts/install.ps1 -Version $env:TAG
+      - name: Check Noob runs and is the right version
         shell: pwsh
         run: |
           $noob = Join-Path $env:LOCALAPPDATA 'Programs\noob\noob.exe'
-          $version = & $noob version
-          Write-Host $version
-          if ($version -notmatch '${{ github.ref_name }}'.TrimStart('v')) { throw "Wrong version: $version" }
+          $shown = & $noob version
+          Write-Host $shown
+          $expected = "Noob " + $env:TAG.TrimStart('v')
+          if ($shown -ne $expected) { throw "Expected '$expected' but got '$shown'" }

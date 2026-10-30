@@ -50,16 +50,20 @@ pub(super) fn real(command: &Command) -> Option<String> {
             format!("grep -rni -e {} {}", quote_text(text), quote(place))
         }
         Command::Clear => "clear".to_string(),
-        Command::Install(_)
-        | Command::Uninstall(_)
-        | Command::UpdateAll
-        | Command::ShowTools
-        | Command::ShowInstalled
-        | Command::IsInstalled(_)
-        | Command::SearchTools(_) => return tools::real_command(command, Os::Mac),
+        Command::Tool(tool) => return tools::real_command(tool, unix_os()),
         Command::Help(_) | Command::Version | Command::Bye => return None,
     };
     Some(text)
+}
+
+/// Homebrew's commands are the same on a Mac and Linux, but some tools (apps with
+/// windows) are only for Macs.
+fn unix_os() -> Os {
+    if cfg!(target_os = "linux") {
+        Os::Linux
+    } else {
+        Os::Mac
+    }
 }
 
 /// "ls", or "ls photos" when a folder was named.

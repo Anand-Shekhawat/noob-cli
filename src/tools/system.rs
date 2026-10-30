@@ -92,8 +92,17 @@ impl System for RealSystem {
 fn find_in(program: &str, path: Option<OsString>) -> Option<PathBuf> {
     let folders = path?;
     env::split_paths(&folders)
+        // An empty entry would mean "the current folder", which anyone could put a
+        // fake program into. Real terminals skip those too.
+        .filter(|folder| !folder.as_os_str().is_empty())
         .flat_map(|folder| possible_files(&folder, program))
-        .find(|file| file.is_file())
+        .find(|file| is_program(file))
+}
+
+/// Windows installs winget as a special shortcut (an "app execution alias") that
+/// doesn't count as a normal file, so anything that isn't a folder counts.
+fn is_program(file: &Path) -> bool {
+    std::fs::symlink_metadata(file).is_ok_and(|info| !info.is_dir())
 }
 
 /// On Windows, programs end in ".exe" (or ".cmd"), but you type them without it.
@@ -123,6 +132,10 @@ mod tests {
         assert_eq!(find_in("tool", Some(path.clone())), Some(folder.join(name)));
         assert_eq!(find_in("missing", Some(path)), None);
         assert_eq!(find_in("tool", None), None);
+
+        // An empty PATH entry ("the current folder") is never searched.
+        let sneaky = env::join_paths([PathBuf::new()]).unwrap();
+        assert_eq!(find_in("tool", Some(sneaky)), None);
         let _ = std::fs::remove_dir_all(&folder);
     }
 }

@@ -78,13 +78,7 @@ pub(super) fn real(command: &Command) -> Option<String> {
             }
         }
         Command::Clear => "clear".to_string(),
-        Command::Install(_)
-        | Command::Uninstall(_)
-        | Command::UpdateAll
-        | Command::ShowTools
-        | Command::ShowInstalled
-        | Command::IsInstalled(_)
-        | Command::SearchTools(_) => return tools::real_command(command, Os::Windows),
+        Command::Tool(tool) => return tools::real_command(tool, Os::Windows),
         Command::Help(_) | Command::Version | Command::Bye => return None,
     };
     Some(text)

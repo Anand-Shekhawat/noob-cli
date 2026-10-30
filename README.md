@@ -25,7 +25,8 @@ irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/inst
 ```
 
 It installs for just you (no administrator needed), checks the download's
-fingerprint, and adds Noob to your PATH. Noob isn't code-signed yet, so Windows may
+fingerprint (its SHA-256 checksum), and adds Noob to your PATH. To install one exact
+version: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/install.ps1))) -Version v0.3.0`. Noob isn't code-signed yet, so Windows may
 show a SmartScreen warning the first time: choose "More info", then "Run anyway".
 
 **From the source code**, if you have Rust: `cargo install --path .`
@@ -45,7 +46,7 @@ Noob installs things for you with Homebrew on a Mac and winget on Windows
 
 | Type this | What happens |
 |---|---|
-| `show tools` | the 16 tools and apps Noob knows by name |
+| `show tools` | the 15 tools and apps Noob knows by name |
 | `install git` | installs Git (also: `install vscode`, `install python`, `install chrome`...) |
 | `install ripgrep` | anything else, by its exact Homebrew or winget name |
 | `search tools video` | look for more |
@@ -111,11 +112,23 @@ Use quotes when a name after the joining word contains it: `copy a.txt to "to do
 - The real commands Noob shows are less careful: `cp` and `mv` replace files
   without asking, and `rm` skips the Trash. Noob reminds you about `rm`.
 
+## How downloads are checked
+
+- Tools come only from Homebrew, winget, or the tool's own official installer
+  (brew.sh, rustup.rs). Noob refuses names that would add someone else's Homebrew
+  source (names with `/`).
+- Noob's own downloads come with a SHA-256 fingerprint. The Windows installer checks
+  it, which catches damaged downloads; the Homebrew formula keeps its own copy of the
+  fingerprints in a separate repository, which also catches a swapped download.
+- Noob isn't code-signed (that costs money each year), so macOS and Windows may warn
+  the first time you open a downloaded copy.
+
 ## Privacy
 
 The commands you type in the `noob>` prompt are saved to `~/.noob_history` so the
 up arrow works next time, just like `~/.zsh_history`. Delete that file to clear it.
 To keep one line out of the history (say, a password you `write`), start it with a space.
+To keep the history somewhere else, set `NOOB_HISTORY` to a file path, or to `off` for none.
 
 Colours switch off automatically when the output isn't a terminal, or when the
 `NO_COLOR` environment variable is set.
@@ -134,6 +147,7 @@ Colours switch off automatically when the output isn't a terminal, or when the
 | `src/suggest.rs` | "Did you mean...?" |
 | `src/help.rs` | `help` and `help <command>`, built from the table |
 | `src/style.rs` | Colours |
+| `LICENSE` | MIT: anyone may use, change and share Noob, keeping the copyright notice |
 | `src/actions/` | The real work, one file per kind of job (files, listing, moving, finding...) |
 | `src/tools/` | Installing tools: the curated catalog, Homebrew and winget |
 | `src/real/` | The real commands Noob teaches: Mac/Linux and PowerShell |

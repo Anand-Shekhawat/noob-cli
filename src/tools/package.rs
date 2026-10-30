@@ -34,14 +34,20 @@ impl Manager {
     }
 }
 
-/// Homebrew, even if the terminal can't find it yet (a common hiccup right after installing).
+/// Homebrew, even if the terminal can't find it yet (a common hiccup right after
+/// installing). Homebrew's own fixed places are checked first, so a program that just
+/// happens to be called "brew" somewhere in PATH can't pretend to be it.
 pub fn homebrew_location(system: &dyn System) -> Option<PathBuf> {
-    system.find("brew").or_else(|| {
-        HOMEBREW_PLACES
-            .iter()
-            .map(PathBuf::from)
-            .find(|place| system.exists(place))
-    })
+    HOMEBREW_PLACES
+        .iter()
+        .map(PathBuf::from)
+        .find(|place| system.exists(place))
+        .or_else(|| system.find("brew"))
+}
+
+/// True for the places Homebrew installs itself.
+pub fn is_standard_homebrew(path: &Path) -> bool {
+    HOMEBREW_PLACES.iter().any(|place| Path::new(place) == path)
 }
 
 pub fn manager(system: &dyn System) -> Result<Manager, ActionError> {
@@ -141,7 +147,13 @@ impl Package {
             Package::Formula(name) => Some(words(&["list", "--formula", name])),
             Package::Cask(name) => Some(words(&["list", "--cask", name])),
             Package::Winget { id, .. } => Some(words(&[
-                "list", "--id", id, "--exact", "--source", "winget",
+                "list",
+                "--id",
+                id,
+                "--exact",
+                "--source",
+                "winget",
+                "--disable-interactivity",
             ])),
             Package::Script(_) | Package::XcodeTools => None,
         }
@@ -188,14 +200,26 @@ fn shown(args: &[String]) -> String {
         .join(" ")
 }
 
-/// Tool names are letters, numbers and `. _ + @ - /`, and never start with "-"
-/// (which an installer would read as an option).
+/// Tool names are letters, numbers and `. _ + @ -`. They never start with "-" (an
+/// installer would read that as an option) or "." and never contain "/": in Homebrew,
+/// "someone/tap/tool" quietly adds someone else's source of programs, which isn't the
+/// official catalog Noob promises.
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
-        && !name.starts_with('-')
+        && !name.starts_with(['-', '.'])
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._+@-/".contains(c))
+            .all(|c| c.is_ascii_alphanumeric() || "._+@-".contains(c))
+}
+
+/// Search text can have spaces ("video player"), but not control characters, and
+/// mustn't look like an option.
+pub fn valid_search(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && text.len() <= 100
+        && !text.starts_with('-')
+        && !text.chars().any(char::is_control)
 }
 
 /// Asks the installer whether it knows a package called exactly `name`.
@@ -212,7 +236,17 @@ pub fn exact_package(name: &str, manager: &Manager, system: &dyn System) -> Opti
         Manager::Homebrew(_) if knows(&["info", "--cask", name]) => {
             Some(Package::Cask(name.to_string()))
         }
-        Manager::Winget(_) if knows(&["show", "--id", name, "--exact", "--source", "winget"]) => {
+        Manager::Winget(_)
+            if knows(&[
+                "show",
+                "--id",
+                name,
+                "--exact",
+                "--source",
+                "winget",
+                "--disable-interactivity",
+            ]) =>
+        {
             Some(Package::Winget {
                 id: name.to_string(),
                 extra: Vec::new(),
@@ -252,6 +286,7 @@ pub fn brew_names(text: &str) -> Vec<String> {
     text.lines()
         .filter(|line| !line.starts_with("==>"))
         .flat_map(str::split_whitespace)
+        .filter(|name| !name.chars().any(char::is_control))
         .map(str::to_string)
         .collect()
 }
@@ -281,18 +316,22 @@ pub fn winget_ids(text: &str) -> Vec<String> {
     else {
         return Vec::new();
     };
+    let Some(width) = version_start.checked_sub(id_start) else {
+        return Vec::new();
+    };
     lines
         .iter()
         .skip(header_at + 1)
         .filter(|line| !line.trim_start().starts_with('-'))
         .map(|line| {
-            let id: String = line
-                .chars()
-                .skip(id_start)
-                .take(version_start - id_start)
-                .collect();
+            let id: String = line.chars().skip(id_start).take(width).collect();
             id.trim().to_string()
         })
-        .filter(|id| !id.is_empty())
+        // Real winget IDs look like "Publisher.Name": this drops footer lines and junk.
+        .filter(|id| {
+            id.contains('.')
+                && !id.contains(char::is_whitespace)
+                && !id.chars().any(char::is_control)
+        })
         .collect()
 }

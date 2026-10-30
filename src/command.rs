@@ -52,7 +52,20 @@ pub enum Command {
         text: String,
         place: String,
     },
-    // Installing tools
+    // Installing tools and apps (the work happens in `tools`)
+    Tool(ToolCommand),
+    // Other
+    Version,
+    Clear,
+    /// `help` on its own, or `help copy` for one command.
+    Help(Option<String>),
+    Bye,
+}
+
+/// Commands for installing tools and apps, kept together so `tools` can handle all of
+/// them, and the compiler can check that none is forgotten.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ToolCommand {
     Install(String),
     Uninstall(String),
     UpdateAll,
@@ -60,12 +73,6 @@ pub enum Command {
     ShowInstalled,
     IsInstalled(String),
     SearchTools(String),
-    // Other
-    Version,
-    Clear,
-    /// `help` on its own, or `help copy` for one command.
-    Help(Option<String>),
-    Bye,
 }
 
 impl Command {

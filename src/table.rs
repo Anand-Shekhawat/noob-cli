@@ -4,7 +4,7 @@
 //! this one list. Adding a command means adding one entry here, plus its real
 //! work in `actions` (the compiler reminds you about that part).
 
-use crate::command::Command;
+use crate::command::{Command, ToolCommand};
 
 /// What comes after the phrase.
 pub enum Shape {
@@ -335,7 +335,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "install git",
         summary: "install a tool or app (see what's there: show tools)",
         group: Group::Tools,
-        build: |names| Command::Install(one(names)),
+        build: |names| Command::Tool(ToolCommand::Install(one(names))),
     },
     Spec {
         phrases: &["uninstall"],
@@ -343,7 +343,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "uninstall vlc",
         summary: "remove something you installed",
         group: Group::Tools,
-        build: |names| Command::Uninstall(one(names)),
+        build: |names| Command::Tool(ToolCommand::Uninstall(one(names))),
     },
     Spec {
         phrases: &["update everything", "update all", "upgrade everything"],
@@ -351,7 +351,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "update everything",
         summary: "get the newest version of everything you installed",
         group: Group::Tools,
-        build: |_| Command::UpdateAll,
+        build: |_| Command::Tool(ToolCommand::UpdateAll),
     },
     Spec {
         phrases: &["show tools", "list tools"],
@@ -359,7 +359,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "show tools",
         summary: "the tools and apps Noob knows by name",
         group: Group::Tools,
-        build: |_| Command::ShowTools,
+        build: |_| Command::Tool(ToolCommand::ShowTools),
     },
     Spec {
         phrases: &["show installed", "list installed"],
@@ -367,7 +367,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "show installed",
         summary: "everything installed with Homebrew or winget",
         group: Group::Tools,
-        build: |_| Command::ShowInstalled,
+        build: |_| Command::Tool(ToolCommand::ShowInstalled),
     },
     Spec {
         phrases: &["is"],
@@ -375,7 +375,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "is git installed",
         summary: "check whether something is installed",
         group: Group::Tools,
-        build: |names| Command::IsInstalled(one(names)),
+        build: |names| Command::Tool(ToolCommand::IsInstalled(one(names))),
     },
     Spec {
         phrases: &["search tools", "search apps"],
@@ -383,7 +383,7 @@ pub static COMMANDS: &[Spec] = &[
         example: "search tools video",
         summary: "look for more in Homebrew or winget",
         group: Group::Tools,
-        build: |names| Command::SearchTools(one(names)),
+        build: |names| Command::Tool(ToolCommand::SearchTools(one(names))),
     },
     // Other
     Spec {
