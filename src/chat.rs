@@ -82,6 +82,20 @@ impl Chat {
             .unwrap_or_default()
     }
 
+    /// Just the folder's own name ("photos", or "~" for your home), for small spaces.
+    pub fn folder_name(&self) -> String {
+        let Ok(here) = std::env::current_dir() else {
+            return String::new();
+        };
+        let short = actions::short(&here);
+        if short == "~" {
+            return short;
+        }
+        here.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or(short)
+    }
+
     /// Runs a line you typed.
     pub fn send(&mut self, input: &str) {
         if input.trim().is_empty() || self.pending.is_some() {

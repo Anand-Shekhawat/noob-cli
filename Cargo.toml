@@ -34,3 +34,6 @@ trash = "5.2.9"
 
 [features]
 app = ["dep:eframe"]
+# For developers only: lets the window save a picture of itself, to check how it looks.
+#   EFRAME_SCREENSHOT_TO=shot.png cargo run --features screenshot --bin noob-app
+screenshot = ["app", "eframe/glow", "eframe/__screenshot"]
