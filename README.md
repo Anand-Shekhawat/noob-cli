@@ -10,29 +10,53 @@ noob photos> copy cat.jpg to backup
   (real command: cp cat.jpg backup)
 ```
 
-## Try it
+## Install
+
+**Mac** (and Linux), with [Homebrew](https://brew.sh):
 
 ```bash
-cargo run
+brew install anand-shekhawat/tap/noob
 ```
 
-That opens the `noob>` prompt. Type `help` to see everything, or `bye` to leave.
+**Windows**, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/install.ps1 | iex
+```
+
+It installs for just you (no administrator needed), checks the download's
+fingerprint, and adds Noob to your PATH. Noob isn't code-signed yet, so Windows may
+show a SmartScreen warning the first time: choose "More info", then "Run anyway".
+
+**From the source code**, if you have Rust: `cargo install --path .`
+
+Then type `noob` to open the `noob>` prompt. Type `help` to see everything, or `bye` to leave.
 
 - **Tab** finishes what you're typing: commands first, then file names.
 - **Up arrow** brings back earlier commands, even after you close Noob.
 - **Ctrl+C** clears the line. **Ctrl+D** leaves.
 
-You can also run one phrase straight from your normal terminal:
+You can also run one phrase straight from your normal terminal: `noob make folder photos`.
 
-```bash
-cargo run -- make folder photos
-```
+## Installing tools and apps
 
-To use `noob` from any folder, install it once:
+Noob installs things for you with Homebrew on a Mac and winget on Windows
+(it comes with Windows 10 and 11). On a new Mac, start with `install homebrew`.
 
-```bash
-cargo install --path .
-```
+| Type this | What happens |
+|---|---|
+| `show tools` | the 16 tools and apps Noob knows by name |
+| `install git` | installs Git (also: `install vscode`, `install python`, `install chrome`...) |
+| `install ripgrep` | anything else, by its exact Homebrew or winget name |
+| `search tools video` | look for more |
+| `is git installed` | yes or no, and where it is |
+| `show installed` | everything installed with Homebrew or winget |
+| `update everything` | the newest version of everything |
+| `uninstall vlc` | removes it |
+
+Noob always says what it will install and where it comes from, then asks first.
+Installers run on screen, so if one asks for your password, you're typing it to
+macOS or Windows directly: Noob never sees it.
 
 ## What it understands
 
@@ -65,7 +89,7 @@ cargo install --path .
 | `find file cat` | `find . -iname '*cat*'` |
 | `find "hello" in notes` | `grep -rni hello notes` |
 | **Other** | |
-| `clear`, `help`, `help copy`, `bye` | |
+| `clear`, `help`, `help copy`, `version`, `bye` | |
 
 Names with spaces work with or without quotes: `make folder my photos`.
 The **last** joining word counts, so `write go to the shop to list.txt` works.
@@ -111,6 +135,8 @@ Colours switch off automatically when the output isn't a terminal, or when the
 | `src/help.rs` | `help` and `help <command>`, built from the table |
 | `src/style.rs` | Colours |
 | `src/actions/` | The real work, one file per kind of job (files, listing, moving, finding...) |
+| `src/tools/` | Installing tools: the curated catalog, Homebrew and winget |
+| `src/real/` | The real commands Noob teaches: Mac/Linux and PowerShell |
 | `tests/cli.rs` | Tests that run the real `noob` program |
 
 ### Adding a command
@@ -121,6 +147,16 @@ Colours switch off automatically when the output isn't a terminal, or when the
    command: its real command, and its action in `src/actions/mod.rs`.
 
 The table tests check that your example really runs your command.
+
+## Making a release
+
+1. Put the new version in `Cargo.toml`, commit, and merge to `main`.
+2. Tag it and push the tag: `git tag v0.3.0 && git push origin v0.3.0`.
+   GitHub builds Noob for Mac (Apple chip and Intel), Windows and Linux, attaches
+   the downloads to a Release, and tries the Windows installer on a fresh PC.
+3. Update the Homebrew tap:
+   `scripts/homebrew-formula.sh v0.3.0 > ../homebrew-tap/Formula/noob.rb`, then commit
+   and push the tap.
 
 ## Checks
 
