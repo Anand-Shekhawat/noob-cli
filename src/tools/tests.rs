@@ -444,13 +444,13 @@ fn names_with_a_slash_are_refused_because_they_add_someone_elses_source() {
 #[test]
 fn an_app_already_in_applications_counts_as_installed() {
     let mac = FakeSystem::mac();
-    mac.files
-        .borrow_mut()
-        .push(PathBuf::from("/Applications/VLC.app"));
+    // Built the same way the code builds it, so this test also passes on Windows.
+    let app = Path::new("/Applications").join("VLC.app");
+    mac.files.borrow_mut().push(app.clone());
     let shown = text(install("vlc", &mac, yes));
     assert_eq!(
         shown,
-        "VLC is already on your Mac, at /Applications/VLC.app."
+        format!("VLC is already on your Mac, at {}.", app.display())
     );
     assert!(mac.ran().is_empty());
 }
