@@ -32,7 +32,7 @@ cask "noob-app" do
   desc "Beginner-friendly command line in its own window"
   homepage "https://github.com/Anand-Shekhawat/noob-cli"
 
-  depends_on macos: ">= :big_sur"
+  depends_on macos: :big_sur # macOS 11 or newer
 
   app "Noob.app"
 
