@@ -4,8 +4,9 @@
 #   irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/install.ps1 | iex
 #
 # What it does: downloads the newest Noob from GitHub, checks the download isn't
-# damaged, puts noob.exe in your user Programs folder, and adds that folder to PATH
-# so typing `noob` works in any new terminal window.
+# damaged, puts noob.exe and Noob's window (noob-app.exe) in your user Programs
+# folder, adds that folder to PATH so typing `noob` works in any new terminal window,
+# and adds Noob to your Start menu.
 
 # To install one exact version instead of the newest: .\install.ps1 -Version v0.3.0
 param([string]$Version = '')
@@ -50,6 +51,7 @@ try {
     foreach ($name in @('noob.exe', 'noob-app.exe', 'noob.ico')) {
         $file = Get-ChildItem $temp -Recurse -Filter $name | Select-Object -First 1
         if ($file) { Copy-Item $file.FullName $installDir -Force }
+        elseif ($name -eq 'noob.exe') { throw "The download doesn't contain noob.exe, so I stopped." }
     }
 }
 finally {

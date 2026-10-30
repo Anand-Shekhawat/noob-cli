@@ -32,6 +32,19 @@ pub trait Handoff {
     fn run_in_terminal(&self, words: &[String]) -> Result<(), String>;
 }
 
+/// A command for the window to run on a helper thread, so the window doesn't freeze
+/// while it works (looking through a big folder can take a while).
+pub struct Job(Command);
+
+impl Job {
+    /// Does the work. Safe to call on another thread; give the result to `Chat::finished`.
+    pub fn run(self) -> Outcome {
+        // Nothing the window runs asks in the middle of its work (installs are handed
+        // to a terminal), so any such question would be answered "no".
+        engine::finish(&self.0, &mut |_| false)
+    }
+}
+
 struct Pending {
     question: String,
     command: Command,
@@ -44,6 +57,8 @@ pub struct Chat {
     /// Where the up/down arrows are in `history`, if they're being used.
     browsing: Option<usize>,
     quit: bool,
+    /// A `Job` is running and its answer hasn't come back yet.
+    busy: bool,
     handoff: Box<dyn Handoff>,
 }
 
@@ -55,6 +70,7 @@ impl Chat {
             history: Vec::new(),
             browsing: None,
             quit: false,
+            busy: false,
             handoff,
         }
     }
@@ -96,10 +112,17 @@ impl Chat {
             .unwrap_or(short)
     }
 
-    /// Runs a line you typed.
-    pub fn send(&mut self, input: &str) {
-        if input.trim().is_empty() || self.pending.is_some() {
-            return;
+    /// True while a `Job` is running. The window waits until it's done.
+    pub fn is_busy(&self) -> bool {
+        self.busy
+    }
+
+    /// Takes a line you typed. If there's work to do, returns a `Job` for the window to
+    /// run (then hand the result to `finished`).
+    #[must_use = "the Job has to be run, or nothing happens"]
+    pub fn send(&mut self, input: &str) -> Option<Job> {
+        if input.trim().is_empty() || self.pending.is_some() || self.busy {
+            return None;
         }
         self.add(Entry::You(input.trim().to_string()));
         // Lines starting with a space stay out of the history, like in the terminal.
@@ -109,23 +132,35 @@ impl Chat {
         }
         self.browsing = None;
         match engine::understand(input, Place::Window) {
-            Next::Finished(outcome) => self.show(outcome),
-            Next::Ask { question, command } => self.pending = Some(Pending { question, command }),
+            Next::Finished(outcome) => {
+                self.show(outcome);
+                None
+            }
+            Next::Ask { question, command } => {
+                self.pending = Some(Pending { question, command });
+                None
+            }
             Next::Run(command) => self.run(command),
         }
     }
 
-    /// Answers the waiting "are you sure?" question.
-    pub fn answer(&mut self, yes: bool) {
-        let Some(pending) = self.pending.take() else {
-            return;
-        };
+    /// Answers the waiting "are you sure?" question. "Yes" may return a `Job` to run.
+    #[must_use = "the Job has to be run, or nothing happens"]
+    pub fn answer(&mut self, yes: bool) -> Option<Job> {
+        let pending = self.pending.take()?;
         self.add(Entry::You(if yes { "Yes" } else { "No" }.to_string()));
         if yes {
-            self.run(pending.command);
+            self.run(pending.command)
         } else {
             self.show(engine::declined());
+            None
         }
+    }
+
+    /// The answer from a `Job` that was running.
+    pub fn finished(&mut self, outcome: Outcome) {
+        self.busy = false;
+        self.show(outcome);
     }
 
     /// The command before this one in your history (the up arrow).
@@ -155,13 +190,16 @@ impl Chat {
         complete::complete(typed)
     }
 
-    fn run(&mut self, command: Command) {
+    fn run(&mut self, command: Command) -> Option<Job> {
         match command {
             Command::Clear => self.entries.clear(),
             Command::Tool(tool) if needs_terminal(&tool) => self.hand_off(&tool),
-            // Nothing else asks in the middle of its work, so any such question is a "no".
-            command => self.show(engine::finish(&command, &mut |_| false)),
+            command => {
+                self.busy = true;
+                return Some(Job(command));
+            }
         }
+        None
     }
 
     fn hand_off(&mut self, tool: &ToolCommand) {
@@ -253,6 +291,14 @@ mod tests {
         (Chat::new(Box::new(handoff.clone())), handoff)
     }
 
+    /// Types a line and, like the window, runs any work it gives back.
+    fn type_line(chat: &mut Chat, line: &str) {
+        if let Some(job) = chat.send(line) {
+            assert!(chat.is_busy());
+            chat.finished(job.run());
+        }
+    }
+
     fn last(chat: &Chat) -> &Entry {
         chat.entries().last().expect("something was said")
     }
@@ -268,7 +314,7 @@ mod tests {
     #[test]
     fn shows_what_you_typed_then_the_answer_and_real_command() {
         let (mut chat, _) = chat();
-        chat.send("where am i");
+        type_line(&mut chat, "where am i");
         let entries = chat.entries();
         assert_eq!(entries[1], Entry::You("where am i".to_string()));
         assert!(
@@ -280,7 +326,7 @@ mod tests {
     #[test]
     fn typos_get_a_hint() {
         let (mut chat, _) = chat();
-        chat.send("shwo files");
+        type_line(&mut chat, "shwo files");
         assert!(
             matches!(last(&chat), Entry::Noob(Line::Hint(text)) if text.contains("show files"))
         );
@@ -289,16 +335,16 @@ mod tests {
     #[test]
     fn risky_commands_wait_for_yes_or_no() {
         let (mut chat, _) = chat();
-        chat.send("delete Cargo.toml");
+        type_line(&mut chat, "delete Cargo.toml");
         assert!(
             chat.question()
                 .is_some_and(|question| question.contains("Cargo.toml"))
         );
 
-        chat.send("show files"); // ignored until the question is answered
+        type_line(&mut chat, "show files"); // ignored until the question is answered
         assert!(chat.question().is_some());
 
-        chat.answer(false);
+        assert!(chat.answer(false).is_none());
         assert_eq!(chat.question(), None);
         assert!(matches!(last(&chat), Entry::Noob(Line::Show(text)) if text.starts_with("Okay")));
         assert!(
@@ -308,9 +354,31 @@ mod tests {
     }
 
     #[test]
+    fn saying_yes_runs_it() {
+        let file = std::env::temp_dir().join(format!("noob-chat-yes-{}.txt", std::process::id()));
+        std::fs::write(&file, "bye").unwrap();
+        let (mut chat, _) = chat();
+        type_line(&mut chat, &format!("delete \"{}\"", file.display()));
+        let job = chat.answer(true).expect("yes gives work to do");
+        chat.finished(job.run());
+        // (Tests use a stand-in for the Trash, so this really is gone.)
+        assert!(!file.exists());
+        assert!(matches!(last(&chat), Entry::Noob(Line::Real(_))));
+    }
+
+    #[test]
+    fn nothing_new_starts_while_busy() {
+        let (mut chat, _) = chat();
+        let job = chat.send("where am i").expect("work to do");
+        assert!(chat.send("show files").is_none(), "ignored while busy");
+        chat.finished(job.run());
+        assert!(!chat.is_busy());
+    }
+
+    #[test]
     fn installs_open_a_terminal_window() {
         let (mut chat, handoff) = chat();
-        chat.send("install git");
+        type_line(&mut chat, "install git");
         assert_eq!(
             *handoff.ran.borrow(),
             vec![vec!["install".to_string(), "git".to_string()]]
@@ -325,7 +393,7 @@ mod tests {
             ..FakeHandoff::default()
         };
         let mut chat = Chat::new(Box::new(handoff));
-        chat.send("update everything");
+        type_line(&mut chat, "update everything");
         assert!(
             matches!(last(&chat), Entry::Noob(Line::Problem(text)) if text.contains("noob update everything"))
         );
@@ -334,7 +402,7 @@ mod tests {
     #[test]
     fn looking_things_up_stays_in_the_window() {
         let (mut chat, handoff) = chat();
-        chat.send("show tools");
+        type_line(&mut chat, "show tools");
         assert!(handoff.ran.borrow().is_empty());
         assert!(
             matches!(&chat.entries()[2], Entry::Noob(Line::Show(text)) if text.contains("Tools Noob knows"))
@@ -344,18 +412,18 @@ mod tests {
     #[test]
     fn clear_empties_the_window_and_bye_closes_it() {
         let (mut chat, _) = chat();
-        chat.send("clear");
+        type_line(&mut chat, "clear");
         assert!(chat.entries().is_empty());
-        chat.send("bye");
+        type_line(&mut chat, "bye");
         assert!(chat.wants_to_quit());
     }
 
     #[test]
     fn arrows_walk_through_earlier_commands() {
         let (mut chat, _) = chat();
-        chat.send("show files");
-        chat.send("where am i");
-        chat.send(" secret line");
+        type_line(&mut chat, "show files");
+        type_line(&mut chat, "where am i");
+        type_line(&mut chat, " secret line");
         assert_eq!(chat.older().as_deref(), Some("where am i"));
         assert_eq!(chat.older().as_deref(), Some("show files"));
         assert_eq!(

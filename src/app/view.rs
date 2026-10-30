@@ -3,13 +3,14 @@
 //! egui redraws the whole window many times a second. Each time, `ui` below describes
 //! what should be on screen, and reports what was clicked or typed since last time.
 
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+
 use eframe::egui::{self, Color32, Key, Modifiers, RichText};
-use noob_cli::chat::{Chat, Entry};
+use noob_cli::chat::{Chat, Entry, Job};
 use noob_cli::complete::Choice;
-use noob_cli::engine::Line;
+use noob_cli::engine::{Line, Outcome};
 use noob_cli::terminal::TerminalWindow;
 
-const INPUT: &str = "noob-typing-box";
 const TOP_BAR_HEIGHT: f32 = 40.0;
 const BOTTOM_BAR_HEIGHT: f32 = 48.0;
 
@@ -24,9 +25,15 @@ const BUTTONS: [(&str, &str); 4] = [
 pub struct NoobApp {
     chat: Chat,
     typed: String,
-    /// Tab choices waiting to be picked, and where in `typed` they go.
+    /// Tab choices waiting to be picked, and the part of `typed` they replace.
     choices: Vec<Choice>,
-    choices_start: usize,
+    replace: std::ops::Range<usize>,
+    /// Where the answer to a running `Job` will arrive.
+    working: Option<Receiver<Outcome>>,
+}
+
+fn typing_box_id() -> egui::Id {
+    egui::Id::unique("noob-typing-box")
 }
 
 impl NoobApp {
@@ -36,30 +43,72 @@ impl NoobApp {
             chat: Chat::new(Box::new(TerminalWindow)),
             typed: String::new(),
             choices: Vec::new(),
-            choices_start: 0,
+            replace: 0..0,
+            working: None,
         };
         // For developers checking how the window looks: NOOB_DEMO="where am i;show files"
         // types those lines at startup. Only in the `screenshot` build, never for users.
         #[cfg(feature = "screenshot")]
         for line in std::env::var("NOOB_DEMO").unwrap_or_default().split(';') {
-            app.send(line);
+            if let Some(job) = app.chat.send(line) {
+                app.chat.finished(job.run());
+            }
         }
         app
     }
 
-    fn send(&mut self, line: &str) {
-        self.chat.send(line);
+    fn send(&mut self, ctx: &egui::Context, line: &str) {
+        let job = self.chat.send(line);
+        self.start(ctx, job);
         self.typed.clear();
         self.choices.clear();
+    }
+
+    /// Runs a `Job` on a helper thread, so the window stays responsive meanwhile.
+    fn start(&mut self, ctx: &egui::Context, job: Option<Job>) {
+        let Some(job) = job else {
+            return;
+        };
+        let (answer, arrives) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            // If the window has closed, nobody is listening, and that's fine.
+            let _ = answer.send(job.run());
+            ctx.request_repaint(); // wake the window up to show the answer
+        });
+        self.working = Some(arrives);
+    }
+
+    /// Picks up the answer from a running `Job`, if it's ready.
+    fn collect(&mut self) {
+        let Some(arrives) = &self.working else {
+            return;
+        };
+        match arrives.try_recv() {
+            Ok(outcome) => {
+                self.chat.finished(outcome);
+                self.working = None;
+            }
+            Err(TryRecvError::Empty) => {} // still working
+            Err(TryRecvError::Disconnected) => {
+                self.chat.finished(Outcome {
+                    lines: vec![Line::Problem("That stopped unexpectedly.".to_string())],
+                    failed: true,
+                    quit: false,
+                });
+                self.working = None;
+            }
+        }
     }
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         // Buttons first, from the right edge; the folder's name gets the space that's left.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let free = self.chat.question().is_none() && !self.chat.is_busy();
             for (label, line) in BUTTONS {
-                if ui.button(label).clicked() && self.chat.question().is_none() {
-                    self.send(line);
+                if ui.add_enabled(free, egui::Button::new(label)).clicked() {
+                    self.send(ui.ctx(), line);
                 }
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -76,7 +125,12 @@ impl NoobApp {
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
-        if let Some(question) = self.chat.question().map(str::to_string) {
+        if self.chat.is_busy() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Working…");
+            });
+        } else if let Some(question) = self.chat.question().map(str::to_string) {
             self.question_bar(ui, &question);
         } else {
             if !self.choices.is_empty() {
@@ -103,16 +157,22 @@ impl NoobApp {
                         || input.consume_key(Modifiers::NONE, Key::Escape),
                 )
             });
-            if ui.button("Yes").clicked() || yes_key {
-                self.chat.answer(true);
+            let answer = if ui.button("Yes").clicked() || yes_key {
+                Some(true)
             } else if ui.button("No").clicked() || no_key {
-                self.chat.answer(false);
+                Some(false)
+            } else {
+                None
+            };
+            if let Some(yes) = answer {
+                let job = self.chat.answer(yes);
+                self.start(ui.ctx(), job);
             }
         });
     }
 
     fn typing_box(&mut self, ui: &mut egui::Ui) {
-        let id = egui::Id::unique(INPUT);
+        let id = typing_box_id();
         if ui.memory(|memory| memory.has_focus(id)) {
             self.special_keys(ui);
         }
@@ -129,7 +189,7 @@ impl NoobApp {
         }
         if response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
             let line = std::mem::take(&mut self.typed);
-            self.send(&line);
+            self.send(ui.ctx(), &line);
         }
         // Keep the typing box ready, unless something else (like a button) has focus.
         if !response.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
@@ -148,29 +208,46 @@ impl NoobApp {
             )
         });
         if up && let Some(line) = self.chat.older() {
-            self.set_typed(ui, line);
+            self.set_typed(ui, line, None);
         }
         if down && let Some(line) = self.chat.newer() {
-            self.set_typed(ui, line);
+            self.set_typed(ui, line, None);
         }
         if tab {
             self.finish_word(ui);
         }
     }
 
+    /// Tab: finish the word at the text cursor (which isn't always at the end).
     fn finish_word(&mut self, ui: &egui::Ui) {
-        let (start, choices) = self.chat.complete(&self.typed);
+        let cursor = self.cursor_byte(ui);
+        let (start, choices) = self.chat.complete(&self.typed[..cursor]);
         match choices.as_slice() {
             [] => {}
             [only] => {
-                let finished = self.with_choice(start, &only.replacement);
-                self.set_typed(ui, finished);
-                self.choices.clear();
+                let replacement = only.replacement.clone();
+                self.replace = start..cursor;
+                self.use_choice(ui, &replacement);
             }
             _ => {
                 self.choices = choices;
-                self.choices_start = start;
+                self.replace = start..cursor;
             }
+        }
+    }
+
+    /// Where the text cursor is, counted in bytes (what slicing a `String` needs).
+    fn cursor_byte(&self, ui: &egui::Ui) -> usize {
+        let chars = egui::TextEdit::load_state(ui.ctx(), typing_box_id())
+            .and_then(|state| state.cursor.char_range())
+            .map(|range| range.primary.index.0); // a letter count
+        match chars {
+            Some(chars) => self
+                .typed
+                .char_indices()
+                .nth(chars)
+                .map_or(self.typed.len(), |(byte, _)| byte),
+            None => self.typed.len(),
         }
     }
 
@@ -185,27 +262,40 @@ impl NoobApp {
             }
         });
         if let Some(replacement) = picked {
-            let finished = self.with_choice(self.choices_start, &replacement);
-            self.set_typed(ui, finished);
-            self.choices.clear();
+            self.use_choice(ui, &replacement);
         }
     }
 
-    /// What's typed up to `start`, followed by the chosen replacement.
-    fn with_choice(&self, start: usize, replacement: &str) -> String {
-        let before = self.typed.get(..start).unwrap_or(&self.typed);
-        format!("{before}{replacement}")
+    /// Puts a Tab choice in place of the half-typed word, keeping anything after it.
+    fn use_choice(&mut self, ui: &egui::Ui, replacement: &str) {
+        let range = self.replace.clone();
+        let fits = range.start <= range.end
+            && range.end <= self.typed.len()
+            && self.typed.is_char_boundary(range.start)
+            && self.typed.is_char_boundary(range.end);
+        if !fits {
+            self.choices.clear(); // what's typed has changed since; nothing to replace
+            return;
+        }
+        let before = &self.typed[..range.start];
+        let after = &self.typed[range.end..];
+        let cursor = before.chars().count() + replacement.chars().count();
+        let finished = format!("{before}{replacement}{after}");
+        self.set_typed(ui, finished, Some(cursor));
     }
 
-    /// Changes what's typed, and puts the text cursor at the end so you can keep typing.
-    fn set_typed(&mut self, ui: &egui::Ui, text: String) {
+    /// Changes what's typed, and puts the text cursor at `cursor` (in letters), or at
+    /// the end, so you can keep typing.
+    fn set_typed(&mut self, ui: &egui::Ui, text: String, cursor: Option<usize>) {
         self.typed = text;
-        let id = egui::Id::unique(INPUT);
+        self.choices.clear();
+        let id = typing_box_id();
         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
-            let end = egui::text::CCursor::new(self.typed.chars().count());
+            let at = cursor.unwrap_or_else(|| self.typed.chars().count());
+            let place = egui::text::CCursor::new(at);
             state
                 .cursor
-                .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                .set_char_range(Some(egui::text::CCursorRange::one(place)));
             state.store(ui.ctx(), id);
         }
     }
@@ -225,6 +315,7 @@ impl NoobApp {
 
 impl eframe::App for NoobApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.collect();
         if self.chat.wants_to_quit() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }

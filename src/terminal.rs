@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 
 use crate::chat::Handoff;
 
-/// When this setting is present, the terminal `noob` waits for Enter before its window
-/// closes, so you can read what happened.
-pub const PAUSE_SETTING: &str = "NOOB_PAUSE_AT_END";
+/// Put first after `noob`, this makes the terminal `noob` wait for Enter before its
+/// window closes, so you can read what happened. (A word on the command line can't
+/// linger afterwards, the way a setting in a terminal could.)
+pub const PAUSE_FLAG: &str = "--pause-at-end";
 
 pub struct TerminalWindow;
 
@@ -35,14 +36,16 @@ fn noob_program() -> PathBuf {
 fn open(noob: &Path, words: &[String]) -> Result<(), String> {
     let script =
         command_file(noob, words).map_err(|error| format!("couldn't write the script: {error}"))?;
-    let status = std::process::Command::new("open")
-        .arg(&script)
-        .status()
-        .map_err(|error| error.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("the Terminal app didn't start".to_string())
+    let opened = std::process::Command::new("open").arg(&script).status();
+    if opened.as_ref().is_ok_and(|status| status.success()) {
+        return Ok(()); // the script deletes itself once it starts
+    }
+    // It never started, so tidy it up here. (If that fails too, it's only a small
+    // file in your own temporary folder.)
+    let _ = std::fs::remove_file(&script);
+    match opened {
+        Ok(_) => Err("the Terminal app didn't start".to_string()),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -67,12 +70,13 @@ fn command_file(noob: &Path, words: &[String]) -> std::io::Result<PathBuf> {
 /// The script's text. Every word is quoted, so nothing in a name can become a command.
 #[cfg(any(test, target_os = "macos"))]
 fn script(noob: &Path, words: &[String]) -> String {
-    let typed: Vec<String> = std::iter::once(noob.display().to_string())
+    let typed: Vec<String> = [noob.display().to_string(), PAUSE_FLAG.to_string()]
+        .into_iter()
         .chain(words.iter().cloned())
         .map(|word| sh_quote(&word))
         .collect();
     format!(
-        "#!/bin/bash\n# Made by Noob. It deletes itself after starting.\nrm -f \"$0\"\ncd ~ || exit\n{PAUSE_SETTING}=1 {}\n",
+        "#!/bin/bash\n# Made by Noob. It deletes itself after starting.\nrm -f \"$0\"\ncd ~ || exit\n{}\n",
         typed.join(" ")
     )
 }
@@ -84,14 +88,21 @@ fn sh_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', r"'\''"))
 }
 
+/// Installers start in your home folder, the same on every computer.
+#[cfg(not(target_os = "macos"))]
+fn home() -> PathBuf {
+    std::env::home_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
 /// On Windows: start `noob.exe` in a brand new console window.
 #[cfg(windows)]
 fn open(noob: &Path, words: &[String]) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     std::process::Command::new(noob)
+        .arg(PAUSE_FLAG)
         .args(words)
-        .env(PAUSE_SETTING, "1")
+        .current_dir(home())
         .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
         .map(|_| ())
@@ -104,8 +115,9 @@ fn open(noob: &Path, words: &[String]) -> Result<(), String> {
     std::process::Command::new("x-terminal-emulator")
         .arg("-e")
         .arg(noob)
+        .arg(PAUSE_FLAG)
         .args(words)
-        .env(PAUSE_SETTING, "1")
+        .current_dir(home())
         .spawn()
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -125,11 +137,10 @@ mod tests {
         );
         assert!(
             text.contains(
-                r"'/Applications/Noob.app/Contents/MacOS/noob' 'install' 'it'\''s; echo oops'"
+                r"'/Applications/Noob.app/Contents/MacOS/noob' '--pause-at-end' 'install' 'it'\''s; echo oops'"
             ),
             "{text}"
         );
-        assert!(text.contains("NOOB_PAUSE_AT_END=1"));
         assert!(
             text.contains("rm -f \"$0\""),
             "the script cleans up after itself"

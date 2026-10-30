@@ -28,6 +28,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Noob</string>
   <key>CFBundleDisplayName</key><string>Noob</string>
   <key>CFBundleIdentifier</key><string>io.github.anand-shekhawat.noob</string>

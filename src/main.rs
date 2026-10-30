@@ -27,11 +27,16 @@ fn main() -> ExitCode {
         return repl::run();
     }
 
-    let outcome = runner::run_words(&words);
-    // When Noob's window opened this terminal for an installer, wait so the window
-    // doesn't vanish before you've read what happened.
-    if env::var_os(noob_cli::terminal::PAUSE_SETTING).is_some() {
-        println!("\nPress Enter to close this window.");
+    // Noob's window opens a terminal with `noob --pause-at-end install git`, so the
+    // window waits for Enter before closing, and you can read what happened.
+    let pause = words.first().map(String::as_str) == Some(noob_cli::terminal::PAUSE_FLAG);
+    let words = if pause { &words[1..] } else { &words[..] };
+    let outcome = runner::run_words(words);
+    if pause {
+        println!(
+            "
+Press Enter to close this window."
+        );
         let mut enter = String::new();
         let _ = std::io::stdin().read_line(&mut enter); // any answer (or none) closes it
     }
