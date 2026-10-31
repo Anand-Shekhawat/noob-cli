@@ -14,5 +14,8 @@ pub mod real;
 pub mod style;
 pub mod suggest;
 pub mod table;
+// Noob's own terminal (your real shell inside Noob's window), only in the app.
+#[cfg(feature = "app")]
+pub mod term;
 pub mod terminal;
 pub mod tools;
