@@ -8,6 +8,10 @@
 //!
 //! The `portable-pty` crate does the operating-system part for us (on Windows it
 //! uses "ConPTY"). Everything we do with the bytes is Noob's own work.
+//!
+//! Heads-up for Windows: ConPTY first prints `ESC[6n` ("where is your cursor?")
+//! and starts the shell only once it gets an answer. Answering is the screen's
+//! job (it knows where the cursor is), so whatever reads this output must reply.
 
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -210,12 +214,31 @@ mod tests {
     /// Shells (PowerShell above all) can take a few seconds to start on a busy computer.
     const PATIENCE: Duration = Duration::from_secs(30);
 
+    /// "Where is your cursor?" On Windows, ConPTY asks this before it starts the
+    /// shell, and waits for the answer. Real terminals reply "row;column" (here,
+    /// row 1 column 1). Later, Noob's screen grid will answer with the real place.
+    const WHERE_IS_THE_CURSOR: &[u8] = b"\x1b[6n";
+    const CURSOR_IS_TOP_LEFT: &[u8] = b"\x1b[1;1R";
+
+    /// Reads one piece of output, answering any "where is your cursor?" in it.
+    fn read_like_a_terminal(shell: &mut Pty, wait: Duration) -> Option<Vec<u8>> {
+        let bytes = shell.read_timeout(wait)?;
+        let questions = bytes
+            .windows(WHERE_IS_THE_CURSOR.len())
+            .filter(|piece| *piece == WHERE_IS_THE_CURSOR)
+            .count();
+        for _ in 0..questions {
+            shell.write(CURSOR_IS_TOP_LEFT).expect("we can answer");
+        }
+        Some(bytes)
+    }
+
     /// Keeps reading what the shell prints until `wanted` shows up (or we give up).
-    fn read_until(shell: &Pty, wanted: &str) -> String {
+    fn read_until(shell: &mut Pty, wanted: &str) -> String {
         let started = Instant::now();
         let mut seen = Vec::new();
         while started.elapsed() < PATIENCE {
-            if let Some(bytes) = shell.read_timeout(Duration::from_millis(100)) {
+            if let Some(bytes) = read_like_a_terminal(shell, Duration::from_millis(100)) {
                 seen.extend(bytes);
             }
             if String::from_utf8_lossy(&seen).contains(wanted) {
@@ -225,6 +248,22 @@ mod tests {
         String::from_utf8_lossy(&seen).into_owned()
     }
 
+    /// Waits until the shell has printed something (its prompt) and then gone
+    /// quiet, so it's ready for typing. Every shell's prompt looks different, so
+    /// we can't wait for particular words.
+    fn wait_until_ready(shell: &mut Pty) {
+        let quiet = Duration::from_millis(500);
+        let started = Instant::now();
+        let mut printed_something = false;
+        while started.elapsed() < PATIENCE {
+            match read_like_a_terminal(shell, quiet) {
+                Some(_) => printed_something = true,
+                None if printed_something => return,
+                None => {}
+            }
+        }
+    }
+
     #[test]
     fn the_shell_runs_what_we_type_and_we_read_its_answer() {
         let mut shell = Pty::start_shell(Size { rows: 24, cols: 80 }).expect("shell starts");
@@ -232,8 +271,9 @@ mod tests {
         // The terminal shows what we type, so `echo hello` would put "hello" on the
         // screen even if the shell never ran it. `hel""lo` only turns into "hello"
         // when the shell really runs it (zsh, bash and PowerShell all join the pieces).
+        wait_until_ready(&mut shell);
         shell.write(b"echo hel\"\"lo\r").expect("we can type");
-        let seen = read_until(&shell, "hello");
+        let seen = read_until(&mut shell, "hello");
         assert!(seen.contains("hello"), "the shell printed: {seen:?}");
 
         shell.write(b"exit\r").expect("we can type");
