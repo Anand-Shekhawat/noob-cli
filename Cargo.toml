@@ -27,13 +27,16 @@ required-features = ["app"]
 #   rustyline: up-arrow history and Tab completion in the noob> prompt
 #   trash:     `delete` sends things to the Trash instead of erasing them
 [dependencies]
-# Only for the windowed app (draws windows on Mac and Windows).
+# Only for the windowed app:
+#   eframe:       draws windows on Mac and Windows
+#   portable-pty: runs your shell inside Noob (a "pseudo-terminal")
 eframe = { version = "0.37.0", optional = true }
+portable-pty = { version = "0.9.0", optional = true }
 rustyline = "19.0.0"
 trash = "5.2.9"
 
 [features]
-app = ["dep:eframe"]
+app = ["dep:eframe", "dep:portable-pty"]
 # For developers only: lets the window save a picture of itself, to check how it looks.
 #   EFRAME_SCREENSHOT_TO=shot.png cargo run --features screenshot --bin noob-app
 screenshot = ["app", "eframe/glow", "eframe/__screenshot"]
