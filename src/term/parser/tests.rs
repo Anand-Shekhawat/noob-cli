@@ -332,19 +332,21 @@ fn a_command_with_far_too_many_numbers_is_dropped() {
 }
 
 #[test]
-fn an_endless_title_is_cut_short_instead_of_eating_all_memory() {
+fn an_endless_title_is_dropped_instead_of_eating_all_memory() {
+    // Half a title (or half a link, or half a clipboard paste) would be wrong,
+    // so a string that's too long is thrown away whole.
     let mut bytes = b"\x1b]0;".to_vec();
     bytes.extend(std::iter::repeat_n(b'x', 1_000_000));
-    bytes.push(0x07);
-    let actions = parse(&bytes);
-    let [Action::Osc(parts)] = &actions[..] else {
-        panic!("expected one OSC");
-    };
-    assert!(
-        parts[1].len() < 100_000,
-        "title kept {} bytes",
-        parts[1].len()
-    );
+    bytes.extend(b"\x07ok");
+    assert_eq!(parse(&bytes), prints("ok"));
+}
+
+#[test]
+fn a_letter_inside_an_escape_code_breaks_it_off_and_still_prints() {
+    // "é" can't be part of an escape code, so the code is abandoned and the
+    // letter shows up as normal text (like xterm). The "m" after it is plain text too.
+    assert_eq!(parse("\x1b[1ém".as_bytes()), prints("ém"));
+    assert_eq!(parse("\x1béx".as_bytes()), prints("éx"));
 }
 
 #[test]

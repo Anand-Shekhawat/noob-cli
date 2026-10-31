@@ -42,7 +42,7 @@ const MAX_PARTS: usize = 8;
 const MAX_INTERMEDIATES: usize = 2;
 
 /// The most bytes we keep of one OSC string (a window title). Anything longer
-/// is cut off, so a program can't make Noob use up all the memory.
+/// is dropped, so a program can't make Noob use up all the memory.
 const MAX_OSC_BYTES: usize = 64 * 1024;
 
 /// The byte that starts every escape code.
@@ -92,7 +92,8 @@ pub struct Parser {
     /// Whether this command has any numbers at all (`ESC[m` has none).
     has_params: bool,
     intermediates: String,
-    /// Too many in-between symbols: drop this command when it ends.
+    /// Too many in-between symbols, or a title longer than `MAX_OSC_BYTES`:
+    /// drop this command when it ends.
     too_long: bool,
     osc: Vec<u8>,
 }
@@ -137,6 +138,13 @@ impl Parser {
             _ => {}
         }
 
+        // A byte of a longer letter (é, 世, 👋) can't be part of an escape code
+        // (those are plain ASCII), so the code is abandoned and the letter is
+        // read as normal text instead, like xterm does.
+        if byte >= 0x80 && self.in_escape_code() {
+            self.state = State::Ground;
+        }
+
         match self.state {
             State::Ground => self.ground(byte, actions),
             State::Escape => self.escape(byte, actions),
@@ -149,6 +157,19 @@ impl Parser {
             // Only ESC (handled above), CAN or SUB end it.
             State::SkipString => {}
         }
+    }
+
+    /// True while reading an ESC or CSI command (not a string like a title).
+    fn in_escape_code(&self) -> bool {
+        matches!(
+            self.state,
+            State::Escape
+                | State::EscapeIntermediate
+                | State::CsiEntry
+                | State::CsiParam
+                | State::CsiIntermediate
+                | State::CsiIgnore
+        )
     }
 
     fn ground(&mut self, byte: u8, actions: &mut Vec<Action>) {
@@ -261,6 +282,8 @@ impl Parser {
             _ => {
                 if self.osc.len() < MAX_OSC_BYTES {
                     self.osc.push(byte);
+                } else {
+                    self.too_long = true;
                 }
             }
         }
@@ -352,7 +375,13 @@ impl Parser {
     }
 
     /// A title (or other OSC string) ended: split it at `;` and hand it over.
+    /// One that was too long is thrown away whole: half a title (or half a
+    /// link) would be wrong.
     fn finish_osc(&mut self, actions: &mut Vec<Action>) {
+        if self.too_long {
+            self.osc.clear();
+            return;
+        }
         let parts = self
             .osc
             .split(|byte| *byte == b';')
