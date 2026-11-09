@@ -9,9 +9,11 @@
 //! window when some arrives. The window then calls `pump`, which feeds it all
 //! through the parser into the grid.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use eframe::egui;
+use noob_cli::term::folder;
 use noob_cli::term::grid::Grid;
 use noob_cli::term::parser::Parser;
 use noob_cli::term::pty::{Pty, Size};
@@ -82,6 +84,29 @@ impl Session {
             self.write(&replies);
         }
         true
+    }
+
+    /// The folder the shell is in right now (unknown on Windows).
+    pub fn folder(&self) -> Option<PathBuf> {
+        self.pty.process_id().and_then(folder::of_process)
+    }
+
+    /// Why the shell can't take a typed command right now, if it can't.
+    pub fn busy(&self) -> Option<&'static str> {
+        if self.ended.is_some() {
+            return Some("The shell has ended. Start a new one first.");
+        }
+        if self.grid.is_alternate() {
+            return Some("A program is open in the terminal. Close it first (in nano: Ctrl+X).");
+        }
+        let shell = self.pty.process_id();
+        let in_front = self.pty.foreground_process();
+        if shell.is_some() && in_front.is_some() && shell != in_front {
+            return Some(
+                "The terminal is still running something. Wait for it, or press Ctrl+C there.",
+            );
+        }
+        None
     }
 
     /// Sends bytes to the shell as if typed. Does nothing once it has ended.

@@ -109,7 +109,7 @@ fn quote_text(text: &str) -> String {
 }
 
 /// Makes a name safe to paste into PowerShell.
-fn quote(name: &str) -> String {
+pub(super) fn quote(name: &str) -> String {
     // A name starting with "-" would look like an option, so write it as ".\-n".
     let name = if name.starts_with('-') {
         format!(".\\{name}")
@@ -124,9 +124,21 @@ fn quote(name: &str) -> String {
 }
 
 /// Inside 'single quotes' PowerShell takes everything literally, except a ' itself,
-/// which is written twice: 'it''s'.
+/// which is written twice: 'it''s'. PowerShell also counts the curly quotes
+/// ‘ ’ ‚ ‛ as ', so they're doubled too.
 fn single_quoted(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
+    let mut quoted = String::from("'");
+    for letter in text.chars() {
+        if matches!(
+            letter,
+            '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}'
+        ) {
+            quoted.push(letter);
+        }
+        quoted.push(letter);
+    }
+    quoted.push('\'');
+    quoted
 }
 
 #[cfg(test)]
@@ -135,6 +147,13 @@ mod tests {
 
     fn real_for(command: Command) -> String {
         real(&command).unwrap()
+    }
+
+    #[test]
+    fn curly_quotes_cannot_end_a_quoted_name_early() {
+        // PowerShell treats ‘ ’ ‚ ‛ like ', so each must be doubled too.
+        assert_eq!(quote("Bob’s; calc"), "'Bob’’s; calc'");
+        assert_eq!(quote("a‘b‚c‛d"), "'a‘‘b‚‚c‛‛d'");
     }
 
     fn name(text: &str) -> String {

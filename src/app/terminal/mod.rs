@@ -29,7 +29,7 @@ use eframe::egui::{
 use draw::{CursorLook, Scene};
 use input::Request;
 use layout::Layout;
-use palette::Theme;
+pub use palette::Theme;
 use select::{Selection, Spot};
 use session::Session;
 
@@ -61,6 +61,8 @@ pub struct TerminalView {
     selection: Option<Selection>,
     /// When the blink started over: typing or new output shows the cursor at once.
     blink_from: Instant,
+    /// Take the keyboard on the next frame (after the Noob bar typed something).
+    wants_focus: bool,
     /// Lines typed for you at the start (developer screenshots only).
     #[cfg(feature = "screenshot")]
     demo: Vec<String>,
@@ -74,6 +76,7 @@ impl TerminalView {
             wheel: 0.0,
             selection: None,
             blink_from: Instant::now(),
+            wants_focus: false,
             #[cfg(feature = "screenshot")]
             demo: demo_lines(),
         }
@@ -89,17 +92,41 @@ impl TerminalView {
         }
     }
 
-    /// The colour for the bar above the terminal, so the two look like one piece.
-    pub fn bar_color(dark_mode: bool) -> Color32 {
-        Theme::for_dark_mode(dark_mode).bar
+    fn session(&self) -> Option<&Session> {
+        match &self.state {
+            Some(State::Running(session)) => Some(session),
+            _ => None,
+        }
     }
 
-    /// Takes in the shell's output while another view is shown, so a busy
-    /// program (like `yes`) can't pile up output in memory meanwhile.
-    pub fn keep_up(&mut self) {
-        if let Some(State::Running(session)) = &mut self.state {
-            session.pump();
+    /// The folder the shell is in right now, if we can tell.
+    pub fn shell_folder(&self) -> Option<std::path::PathBuf> {
+        self.session().and_then(Session::folder)
+    }
+
+    /// Why a command can't be typed into the shell right now, if it can't.
+    pub fn busy(&self) -> Option<&'static str> {
+        match &self.state {
+            Some(State::Running(session)) => session.busy(),
+            Some(State::Failed(_)) => Some("The shell couldn't start, so there's nowhere to type."),
+            None => Some("The shell is still starting. Try again in a moment."),
         }
+    }
+
+    /// Writes `command` into the shell's prompt, without pressing Enter, and
+    /// hands the keyboard to the terminal so your Enter runs it.
+    pub fn type_into_prompt(&mut self, command: &str) {
+        if let Some(State::Running(session)) = &mut self.state {
+            session.write(&keys::prompt_bytes(command, cfg!(windows)));
+            self.scroll = 0;
+            self.blink_from = Instant::now();
+            self.wants_focus = true;
+        }
+    }
+
+    /// Hands the keyboard back to the terminal.
+    pub fn focus(&mut self) {
+        self.wants_focus = true;
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -158,7 +185,10 @@ impl TerminalView {
         type_demo_lines(session, &mut self.demo);
 
         // Keep the keyboard here, including Tab, arrows and Escape.
-        if response.clicked() || ui.memory(|memory| memory.focused().is_none()) {
+        if std::mem::take(&mut self.wants_focus)
+            || response.clicked()
+            || ui.memory(|memory| memory.focused().is_none())
+        {
             response.request_focus();
         }
         // Typing goes here only while this view has the keyboard and the window

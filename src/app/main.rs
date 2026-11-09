@@ -2,6 +2,7 @@
 //! engine (`noob_cli`), exactly as it does in the terminal.
 #![windows_subsystem = "windows"] // no extra black console window on Windows
 
+mod bar;
 #[cfg(feature = "screenshot")]
 mod devshot;
 mod terminal;

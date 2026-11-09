@@ -98,7 +98,7 @@ fn quote_text(text: &str) -> String {
 }
 
 /// Makes a name safe to paste into a real terminal.
-fn quote(name: &str) -> String {
+pub(super) fn quote(name: &str) -> String {
     // A name starting with "-" would look like an option (`rm -n`), so write it as "./-n".
     let name = if name.starts_with('-') {
         format!("./{name}")

@@ -32,3 +32,12 @@ pub fn for_shell(command: &Command, shell: Shell) -> Option<String> {
         Shell::PowerShell => powershell::real(command),
     }
 }
+
+/// A file or folder name written so it's safe to type into that shell
+/// (quoted if it has spaces or symbols, and never mistaken for an option).
+pub fn quote_name(name: &str, shell: Shell) -> String {
+    match shell {
+        Shell::Unix => unix::quote(name),
+        Shell::PowerShell => powershell::quote(name),
+    }
+}

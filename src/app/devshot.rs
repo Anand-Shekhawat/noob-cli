@@ -6,9 +6,10 @@
 //!   NOOB_SHOT_TO=shot.ppm NOOB_SHOT_AFTER_MS=4000 \
 //!     cargo run --features screenshot --bin noob-app
 //!
-//! `NOOB_KEYS` presses keys for you, as if typed, 2.5 seconds in, so the
-//! real keyboard path can be checked too. Pieces are split by `|`:
+//! `NOOB_KEYS` presses keys for you, one piece per frame from 2.5 seconds in,
+//! so the real keyboard path can be checked too. Pieces are split by `|`:
 //! `text:echo hi` types text, `key:Enter` presses a key, `ctrl:C` holds Ctrl,
+//! `cmd:K` holds Cmd (Ctrl on Windows and Linux),
 //! `wheel:5` turns the mouse wheel 5 lines up (over the middle of the window).
 //! `NOOB_THEME=light` shows the light look.
 //!
@@ -18,7 +19,7 @@
 
 use std::io::Write;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, ColorImage, ScreenshotCallback, ViewportCommand};
@@ -26,36 +27,44 @@ use eframe::egui::{self, ColorImage, ScreenshotCallback, ViewportCommand};
 const DEFAULT_WAIT: Duration = Duration::from_secs(4);
 const KEYS_AFTER: Duration = Duration::from_millis(2500);
 
-/// Adds the `NOOB_KEYS` presses to egui's input, once.
+/// Adds the `NOOB_KEYS` presses to egui's input, one piece per frame (like a
+/// person typing), so a shortcut can move the keyboard before the next piece.
 pub fn press_keys(raw_input: &mut egui::RawInput) {
     static STARTED: OnceLock<Instant> = OnceLock::new();
-    static DONE: AtomicBool = AtomicBool::new(false);
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
     let Ok(keys) = std::env::var("NOOB_KEYS") else {
         return;
     };
-    if STARTED.get_or_init(Instant::now).elapsed() < KEYS_AFTER || DONE.swap(true, Ordering::SeqCst)
-    {
+    if STARTED.get_or_init(Instant::now).elapsed() < KEYS_AFTER {
         return;
     }
-    for piece in keys.split('|') {
+    let index = NEXT.fetch_add(1, Ordering::SeqCst);
+    if let Some(piece) = keys.split('|').nth(index) {
         raw_input.events.extend(key_events(piece));
     }
 }
 
 fn key_events(piece: &str) -> Vec<egui::Event> {
+    // A press and its release, like a real key.
     let press = |name: &str, modifiers: egui::Modifiers| {
-        egui::Key::from_name(name).map(|key| egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers,
-        })
+        egui::Key::from_name(name)
+            .map(|key| {
+                [true, false].map(|pressed| egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                })
+            })
+            .into_iter()
+            .flatten()
     };
     match piece.split_once(':') {
         Some(("text", text)) => vec![egui::Event::Text(text.to_string())],
-        Some(("key", name)) => press(name, egui::Modifiers::NONE).into_iter().collect(),
-        Some(("ctrl", name)) => press(name, egui::Modifiers::CTRL).into_iter().collect(),
+        Some(("key", name)) => press(name, egui::Modifiers::NONE).collect(),
+        Some(("ctrl", name)) => press(name, egui::Modifiers::CTRL).collect(),
+        Some(("cmd", name)) => press(name, egui::Modifiers::COMMAND).collect(),
         Some(("wheel", lines)) => vec![
             egui::Event::PointerMoved(egui::pos2(400.0, 300.0)),
             egui::Event::MouseWheel {
