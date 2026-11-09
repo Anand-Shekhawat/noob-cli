@@ -99,9 +99,10 @@ impl NoobBar {
         }
         let mut submitted = None;
         ui.horizontal(|ui| {
+            // Same size as the text, so the two sit on one line.
             ui.label(
                 RichText::new("›")
-                    .size(INPUT_TEXT_SIZE + 3.0)
+                    .size(INPUT_TEXT_SIZE)
                     .strong()
                     .color(theme.cursor),
             );
@@ -139,8 +140,12 @@ impl NoobBar {
                 response.request_focus();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(shortcut_name()).small().color(theme.ansi[8]))
-                    .on_hover_text("Jump between the terminal and the Noob bar");
+                ui.label(
+                    RichText::new(shortcut_name())
+                        .size(12.0)
+                        .color(theme.ansi[8]),
+                )
+                .on_hover_text("Jump between the terminal and the Noob bar");
             });
         });
         if let Some(line) = submitted {
@@ -329,6 +334,11 @@ impl NoobBar {
             if ui.button("No").clicked() || no_key {
                 answer = Some(false);
             }
+            ui.label(
+                RichText::new("or press Y / N")
+                    .size(12.0)
+                    .color(theme.ansi[8]),
+            );
         });
         let Some(yes) = answer else {
             return;
