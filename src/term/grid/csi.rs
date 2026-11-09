@@ -24,7 +24,7 @@
 //! Numbers count from 1, and a missing number (or 0) means "the usual": 1 for
 //! counts and positions.
 
-use super::{Cell, Grid, sgr};
+use super::{Cell, Grid, MAX_REPLY_BYTES, sgr};
 use crate::term::parser::Csi;
 
 impl Grid {
@@ -61,7 +61,10 @@ impl Grid {
             (None, "", 'Z') => self.tab_back(count(0)),
             (None, "", 'J') => self.erase_display(raw(0)),
             (None, "", 'K') => self.erase_line(raw(0)),
-            (None, "", '@') => self.insert_blanks(count(0)),
+            (None, "", '@') => {
+                self.cursor.pending_wrap = false;
+                self.insert_blanks(count(0));
+            }
             (None, "", 'P') => self.delete_letters(count(0)),
             (None, "", 'X') => self.erase_letters(count(0)),
             (None, "", 'L') => self.insert_lines(count(0)),
@@ -313,7 +316,9 @@ impl Grid {
                     self.save_cursor();
                     self.switch_screen(true, true);
                 }
-                1049 => {
+                // Only bring the cursor back if we really were on the alternate
+                // screen; a stray "leave" must not move it.
+                1049 if self.alternate => {
                     self.switch_screen(false, false);
                     self.restore_cursor();
                 }
@@ -342,6 +347,9 @@ impl Grid {
     }
 
     fn reply(&mut self, answer: &str) {
+        if self.replies.len() + answer.len() > MAX_REPLY_BYTES {
+            return;
+        }
         self.replies.extend_from_slice(answer.as_bytes());
     }
 }

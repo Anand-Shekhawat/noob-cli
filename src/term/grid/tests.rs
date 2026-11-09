@@ -415,6 +415,30 @@ fn the_grid_answers_where_is_your_cursor() {
 }
 
 #[test]
+fn answers_nobody_collects_do_not_pile_up_forever() {
+    // A program asking "where is your cursor?" in a loop must not use up memory.
+    let mut grid = Grid::new(5, 10);
+    feed(&mut grid, &b"\x1b[6n".repeat(10_000));
+    assert!(grid.take_replies().len() <= MAX_REPLY_BYTES);
+}
+
+#[test]
+fn leaving_the_alternate_screen_twice_does_not_move_the_cursor() {
+    // Some programs send "leave" on exit even if they never entered (or leave
+    // twice); the cursor must stay put, not jump to the top corner.
+    let grid = screen(3, 10, b"$ ls\x1b[?1049l");
+    assert_eq!(grid.cursor(), (0, 4));
+    let grid = screen(3, 10, b"$ ls\x1b[?1049h\x1b[?1049l\x1b[?1049l");
+    assert_eq!(grid.cursor(), (0, 4));
+}
+
+#[test]
+fn inserting_letters_after_a_full_row_does_not_wrap_early() {
+    let grid = screen(2, 5, b"abcde\x1b[@x");
+    assert_eq!(text(&grid), lines(&["abcdx", ""]));
+}
+
+#[test]
 fn modes_the_keyboard_will_need_are_remembered() {
     let grid = screen(1, 10, b"\x1b[?1h\x1b[?2004h");
     assert!(grid.modes().app_cursor_keys);

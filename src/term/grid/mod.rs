@@ -32,6 +32,10 @@ use super::parser::{Action, Control, Esc};
 /// about 50 MB at worst, and much less for normal output.
 pub const DEFAULT_SCROLLBACK: usize = 10_000;
 
+/// The most answer bytes we hold for the shell. If nothing collects them,
+/// newer answers are dropped instead of using up memory.
+const MAX_REPLY_BYTES: usize = 4 * 1024;
+
 /// The biggest screen we accept, in rows or columns. Real windows are a few
 /// hundred at most; a limit stops a bad size from using up all the memory.
 const MAX_SIZE: usize = 1_000;
