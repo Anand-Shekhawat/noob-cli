@@ -8,8 +8,8 @@
 use eframe::egui;
 
 use crate::bar::NoobBar;
+use crate::settings::SettingsState;
 use crate::tabs::Tabs;
-use crate::terminal::Theme;
 
 /// Space around the Noob bar's contents.
 const BAR_MARGIN: egui::Margin = egui::Margin {
@@ -21,15 +21,17 @@ const BAR_MARGIN: egui::Margin = egui::Margin {
 
 pub struct NoobApp {
     tabs: Tabs,
+    settings: SettingsState,
     bar: NoobBar,
     /// The window title last set, so it's only changed when the shell's changes.
     title: String,
 }
 
 impl NoobApp {
-    pub fn new() -> Self {
+    pub fn new(ctx: &egui::Context) -> Self {
         NoobApp {
             tabs: Tabs::new(),
+            settings: SettingsState::load(ctx),
             bar: NoobBar::new(),
             title: String::new(),
         }
@@ -58,7 +60,10 @@ impl eframe::App for NoobApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         #[cfg(feature = "screenshot")]
         crate::devshot::maybe_take(ui.ctx());
-        let theme = Theme::for_dark_mode(ui.visuals().dark_mode);
+        // Settings shortcuts (Cmd+ / Cmd− / Cmd+,) come first of all.
+        self.settings.shortcuts(ui);
+        let theme = self.settings.theme(ui);
+        let font_size = self.settings.font_size();
 
         // Tab shortcuts are taken first, so they never reach the shell.
         let mut close_window = self.tabs.shortcuts(ui);
@@ -88,7 +93,12 @@ impl eframe::App for NoobApp {
         // No margin: the terminal paints its own background to the edges.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ui, |ui| self.tabs.active().ui(ui));
+            .show(ui, |ui| {
+                let terminal = self.tabs.active();
+                terminal.set_listening(!self.settings.panel_open());
+                terminal.ui(ui, &theme, font_size);
+            });
+        self.settings.panel(ui.ctx(), &theme);
         if close_window {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
