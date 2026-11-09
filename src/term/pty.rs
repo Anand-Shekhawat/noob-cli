@@ -144,6 +144,27 @@ impl Pty {
         })
     }
 
+    /// The shell's process number, so we can ask the system which folder it's in.
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
+    /// The process number of whatever is running in front right now: the shell
+    /// itself while it waits at its prompt, or a program it started (like
+    /// `sleep 60`). Only Macs and Linux can tell; elsewhere it's `None`.
+    pub fn foreground_process(&self) -> Option<u32> {
+        #[cfg(unix)]
+        {
+            self.master
+                .process_group_leader()
+                .and_then(|pid| u32::try_from(pid).ok())
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     /// Waits up to `timeout` for the shell to end (say, after you typed `exit`).
     /// `None` means it's still running.
     pub fn wait_for_exit(&mut self, timeout: Duration) -> Option<ExitStatus> {
@@ -356,6 +377,27 @@ mod tests {
             wakes.load(Ordering::SeqCst) > before,
             "the shell ending woke us up"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_shell_is_in_front_until_it_starts_a_program() {
+        let mut shell = Pty::start_shell(Size { rows: 24, cols: 80 }).expect("shell starts");
+        wait_until_ready(&mut shell);
+        let shell_id = shell.process_id().expect("the shell has a number");
+        assert_eq!(shell.foreground_process(), Some(shell_id));
+
+        shell.write(b"sleep 20\r").expect("we can type");
+        let started = Instant::now();
+        while shell.foreground_process() == Some(shell_id) && started.elapsed() < PATIENCE {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_ne!(
+            shell.foreground_process(),
+            Some(shell_id),
+            "sleep is in front now"
+        );
+        shell.stop();
     }
 
     #[test]

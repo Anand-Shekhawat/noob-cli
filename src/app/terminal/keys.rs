@@ -68,6 +68,19 @@ pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
     [PASTE_START, text.as_bytes(), PASTE_END].concat()
 }
 
+/// What to send so `command` sits in the shell's prompt, ready for you to
+/// press Enter. Whatever was half-typed there is cleared first (Ctrl+U on a
+/// Mac or Linux, Esc in PowerShell). Line breaks and other control characters
+/// are dropped, so nothing can run before you press Enter yourself.
+pub fn prompt_bytes(command: &str, powershell: bool) -> Vec<u8> {
+    let clear: &[u8] = if powershell { b"\x1b" } else { b"\x15" };
+    let command: String = command
+        .chars()
+        .filter(|letter| !letter.is_control())
+        .collect();
+    [clear, command.as_bytes()].concat()
+}
+
 /// Ctrl+letter is the letter's place in the alphabet: Ctrl+A is 1, Ctrl+C
 /// is 3 (stop), Ctrl+D is 4 (end of input). A few symbols have codes too.
 fn ctrl_byte(key: Key) -> Option<u8> {
@@ -319,6 +332,20 @@ mod tests {
             send(Key::ArrowLeft, altgr),
             Some(b"\x1b[1;7D".to_vec()),
             "special keys still work"
+        );
+    }
+
+    #[test]
+    fn a_command_for_the_prompt_clears_the_line_first_and_never_presses_enter() {
+        assert_eq!(
+            prompt_bytes("mkdir -p photos", false),
+            b"\x15mkdir -p photos".to_vec()
+        );
+        assert_eq!(prompt_bytes("ls", true), b"\x1bls".to_vec());
+        assert_eq!(
+            prompt_bytes("ls\rrm -rf x\n", false),
+            b"\x15lsrm -rf x".to_vec(),
+            "no line breaks, so nothing runs by itself"
         );
     }
 

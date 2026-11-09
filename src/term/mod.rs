@@ -7,6 +7,7 @@
 //!   - `grid`: carries out those instructions on a grid of cells, so we know
 //!     exactly what the screen shows (letters, colours, cursor, history).
 
+pub mod folder;
 pub mod grid;
 pub mod parser;
 pub mod pty;

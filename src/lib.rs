@@ -4,6 +4,7 @@
 //! (in its own window, see `app/main.rs`). Both send what you type to `engine`.
 
 pub mod actions;
+pub mod bar;
 pub mod chat;
 pub mod command;
 pub mod complete;

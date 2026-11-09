@@ -109,7 +109,7 @@ fn quote_text(text: &str) -> String {
 }
 
 /// Makes a name safe to paste into PowerShell.
-fn quote(name: &str) -> String {
+pub(super) fn quote(name: &str) -> String {
     // A name starting with "-" would look like an option, so write it as ".\-n".
     let name = if name.starts_with('-') {
         format!(".\\{name}")
