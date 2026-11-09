@@ -86,6 +86,8 @@ impl Settings {
     /// its normal value.
     pub fn from_text(text: &str) -> Settings {
         let mut settings = Settings::default();
+        // Windows Notepad may put an invisible "BOM" mark at the very start.
+        let text = text.trim_start_matches('\u{feff}');
         for line in text.lines().map(str::trim) {
             if line.starts_with('#') {
                 continue;
@@ -183,6 +185,20 @@ mod tests {
             Settings::from_text(text),
             Settings {
                 font_size: 12.0,
+                theme: ThemeChoice::Light,
+            }
+        );
+    }
+
+    #[test]
+    fn a_file_saved_by_windows_notepad_still_reads() {
+        // Notepad may start the file with an invisible mark (a "BOM") and end
+        // lines with \r\n.
+        let text = "\u{feff}font_size = 20\r\ntheme = light\r\n";
+        assert_eq!(
+            Settings::from_text(text),
+            Settings {
+                font_size: 20.0,
                 theme: ThemeChoice::Light,
             }
         );

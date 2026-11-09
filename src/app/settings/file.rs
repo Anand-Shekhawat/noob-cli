@@ -63,9 +63,14 @@ pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
     if let Some(folder) = path.parent() {
         std::fs::create_dir_all(folder)?;
     }
-    let temporary = path.with_extension("txt.new");
-    std::fs::write(&temporary, settings.to_text())?;
-    std::fs::rename(&temporary, path)
+    // Each Noob gets its own temporary file, so two windows can't mix them up.
+    let temporary = path.with_extension(format!("txt.{}.new", std::process::id()));
+    let saved = std::fs::write(&temporary, settings.to_text())
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if saved.is_err() {
+        let _ = std::fs::remove_file(&temporary); // don't leave half a save behind
+    }
+    saved
 }
 
 #[cfg(test)]

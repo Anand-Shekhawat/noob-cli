@@ -61,6 +61,8 @@ pub struct TerminalView {
     blink_from: Instant,
     /// Take the keyboard on the next frame (after the Noob bar typed something).
     wants_focus: bool,
+    /// False while something else (like the Settings panel) has the keyboard.
+    listening: bool,
     /// Where the shell starts (a new tab opens in the folder you were in).
     start_folder: Option<std::path::PathBuf>,
     /// Lines typed for you at the start (developer screenshots only).
@@ -83,6 +85,7 @@ impl TerminalView {
             selection: None,
             blink_from: Instant::now(),
             wants_focus: false,
+            listening: true,
             #[cfg(feature = "screenshot")]
             demo: demo_lines(),
         }
@@ -144,6 +147,12 @@ impl TerminalView {
     pub fn is_running_program(&self) -> bool {
         self.session()
             .is_some_and(|session| session.ended().is_none() && session.busy().is_some())
+    }
+
+    /// Whether this terminal takes keys at all. Off while the Settings panel
+    /// is open, so typing there (or Esc) never reaches the shell.
+    pub fn set_listening(&mut self, listening: bool) {
+        self.listening = listening;
     }
 
     /// Hands the keyboard back to the terminal.
@@ -208,9 +217,9 @@ impl TerminalView {
         type_demo_lines(session, &mut self.demo);
 
         // Keep the keyboard here, including Tab, arrows and Escape.
-        if std::mem::take(&mut self.wants_focus)
-            || response.clicked()
-            || ui.memory(|memory| memory.focused().is_none())
+        let wants_focus = std::mem::take(&mut self.wants_focus);
+        if self.listening
+            && (wants_focus || response.clicked() || ui.memory(|memory| memory.focused().is_none()))
         {
             response.request_focus();
         }
@@ -218,7 +227,7 @@ impl TerminalView {
         // itself is the one in front.
         let window_focused = ui.input(|input| input.viewport().focused.unwrap_or(true));
         let focused = response.has_focus() && window_focused;
-        if focused && session.ended().is_none() {
+        if focused && self.listening && session.ended().is_none() {
             ui.memory_mut(|memory| {
                 memory.set_focus_lock_filter(
                     response.id,

@@ -49,6 +49,11 @@ impl SettingsState {
         }
     }
 
+    /// While the panel is open, keys belong to it, not to the terminal.
+    pub fn panel_open(&self) -> bool {
+        self.panel_open
+    }
+
     pub fn font_size(&self) -> f32 {
         self.settings.font_size
     }
@@ -60,6 +65,12 @@ impl SettingsState {
 
     /// Reads the settings shortcuts before anything else sees those keys.
     pub fn shortcuts(&mut self, ui: &mut egui::Ui) {
+        // Esc closes the panel, and is taken here so the shell never gets it.
+        if self.panel_open
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.panel_open = false;
+        }
         let on_mac = cfg!(target_os = "macos");
         let actions: Vec<SettingsAction> = ui.input_mut(|input| {
             let mut actions = Vec::new();
@@ -113,10 +124,6 @@ impl SettingsState {
     /// The Settings panel, when it's open.
     pub fn panel(&mut self, ctx: &egui::Context, theme: &Theme) {
         if !self.panel_open {
-            return;
-        }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-            self.panel_open = false;
             return;
         }
         let mut settings = self.settings;

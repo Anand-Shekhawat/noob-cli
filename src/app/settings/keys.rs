@@ -25,7 +25,8 @@ pub fn settings_action(key: Key, mods: Modifiers, on_mac: bool) -> Option<Settin
     match key {
         // The + key is = without Shift.
         Key::Plus | Key::Equals => Some(SettingsAction::Bigger),
-        Key::Minus => Some(SettingsAction::Smaller),
+        // With Shift it's Ctrl+_ ("undo" in the shell), which isn't ours.
+        Key::Minus if on_mac || !mods.shift => Some(SettingsAction::Smaller),
         Key::Num0 => Some(SettingsAction::NormalSize),
         Key::Comma => Some(SettingsAction::OpenPanel),
         _ => None,
@@ -86,6 +87,21 @@ mod tests {
         assert_eq!(
             settings_action(Key::Comma, ctrl(), false),
             Some(SettingsAction::OpenPanel)
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_minus_stays_with_the_shell_on_windows_and_linux() {
+        // Ctrl+Shift+- is Ctrl+_ : "undo" in the shell, "go to line" in nano.
+        let ctrl_shift = Modifiers {
+            shift: true,
+            ..ctrl()
+        };
+        assert_eq!(settings_action(Key::Minus, ctrl_shift, false), None);
+        assert_eq!(
+            settings_action(Key::Minus, ctrl(), false),
+            Some(SettingsAction::Smaller),
+            "plain Ctrl+- shrinks, like Windows Terminal"
         );
     }
 

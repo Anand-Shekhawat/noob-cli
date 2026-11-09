@@ -93,7 +93,11 @@ impl eframe::App for NoobApp {
         // No margin: the terminal paints its own background to the edges.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ui, |ui| self.tabs.active().ui(ui, &theme, font_size));
+            .show(ui, |ui| {
+                let terminal = self.tabs.active();
+                terminal.set_listening(!self.settings.panel_open());
+                terminal.ui(ui, &theme, font_size);
+            });
         self.settings.panel(ui.ctx(), &theme);
         if close_window {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
