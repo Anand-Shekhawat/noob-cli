@@ -19,6 +19,12 @@ pub enum TabAction {
     Last,
 }
 
+/// The key to match shortcuts against: where it is on the keyboard when we
+/// know, otherwise the letter it typed.
+pub fn shortcut_key(key: Key, physical: Option<Key>) -> Key {
+    physical.unwrap_or(key)
+}
+
 /// The tab action for a key press, if it is one.
 pub fn tab_action(key: Key, mods: Modifiers, on_mac: bool) -> Option<TabAction> {
     // Ctrl+Tab and Ctrl+Shift+Tab, like in web browsers, everywhere.
@@ -51,8 +57,8 @@ pub fn tab_action(key: Key, mods: Modifiers, on_mac: bool) -> Option<TabAction> 
     match key {
         Key::T => Some(TabAction::New),
         Key::W => Some(TabAction::Close),
-        Key::CloseBracket => Some(TabAction::Next),
-        Key::OpenBracket => Some(TabAction::Previous),
+        Key::CloseBracket | Key::CloseCurlyBracket => Some(TabAction::Next),
+        Key::OpenBracket | Key::OpenCurlyBracket => Some(TabAction::Previous),
         Key::Num9 => Some(TabAction::Last),
         _ => NUMBERS
             .iter()
@@ -164,6 +170,37 @@ mod tests {
             Some(TabAction::Previous)
         );
         assert_eq!(tab_action(Key::Tab, ctrl, false), Some(TabAction::Next));
+    }
+
+    #[test]
+    fn shifted_keys_are_read_by_where_they_are_on_the_keyboard() {
+        // With Shift held, "]" arrives as "}" and "1" as "!". The key's place
+        // on the keyboard (its "physical" key) is still "]" or "1".
+        assert_eq!(
+            shortcut_key(Key::CloseCurlyBracket, Some(Key::CloseBracket)),
+            Key::CloseBracket
+        );
+        assert_eq!(
+            shortcut_key(Key::Exclamationmark, Some(Key::Num1)),
+            Key::Num1
+        );
+        assert_eq!(shortcut_key(Key::T, None), Key::T);
+    }
+
+    #[test]
+    fn curly_brackets_still_switch_tabs_if_that_is_all_we_get() {
+        let cmd_shift = Modifiers {
+            shift: true,
+            ..cmd()
+        };
+        assert_eq!(
+            tab_action(Key::CloseCurlyBracket, cmd_shift, true),
+            Some(TabAction::Next)
+        );
+        assert_eq!(
+            tab_action(Key::OpenCurlyBracket, cmd_shift, true),
+            Some(TabAction::Previous)
+        );
     }
 
     #[test]

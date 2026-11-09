@@ -16,7 +16,7 @@ mod title;
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Sense};
 
 use crate::terminal::{TerminalView, Theme};
-use keys::{TabAction, tab_action};
+use keys::{TabAction, shortcut_key, tab_action};
 use list::TabList;
 use title::short_title;
 
@@ -71,12 +71,14 @@ impl Tabs {
             input.events.retain(|event| match event {
                 egui::Event::Key {
                     key,
+                    physical_key,
                     pressed,
+                    repeat,
                     modifiers,
-                    ..
-                } => match tab_action(*key, *modifiers, on_mac) {
+                } => match tab_action(shortcut_key(*key, *physical_key), *modifiers, on_mac) {
                     Some(action) => {
-                        if *pressed {
+                        // Holding Cmd+T down shouldn't open a tab per repeat.
+                        if *pressed && !*repeat {
                             actions.push(action);
                         }
                         false // a tab shortcut never reaches the shell
@@ -189,19 +191,35 @@ impl Tabs {
         if add {
             self.open_tab();
         }
-        match close {
+        let close_window = match close {
             Some(index) => self.ask_to_close(index),
             None => false,
+        };
+        // A click on the strip shouldn't keep the keyboard: give it back to
+        // the terminal, so Enter goes to the shell, not to a button.
+        if clicked.is_some() || add || close.is_some() {
+            self.active().focus();
         }
+        close_window
     }
 
     fn close_question(&mut self, ui: &mut egui::Ui, theme: &Theme, index: usize) -> bool {
+        // Y, N and Esc answer; while the question shows, no key reaches the
+        // shell (otherwise the "y" would also be typed into it).
         let (yes_key, no_key) = ui.input_mut(|input| {
-            (
-                input.consume_key(egui::Modifiers::NONE, egui::Key::Y),
-                input.consume_key(egui::Modifiers::NONE, egui::Key::N)
-                    || input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
-            )
+            let pressed = |wanted: egui::Key| {
+                input.events.iter().any(|event| {
+                    matches!(event, egui::Event::Key { key, pressed: true, .. } if *key == wanted)
+                })
+            };
+            let answers = (
+                pressed(egui::Key::Y),
+                pressed(egui::Key::N) || pressed(egui::Key::Escape),
+            );
+            input
+                .events
+                .retain(|event| !matches!(event, egui::Event::Key { .. } | egui::Event::Text(_)));
+            answers
         });
         let mut answer = None;
         ui.horizontal(|ui| {
@@ -220,14 +238,16 @@ impl Tabs {
                 answer = Some(false);
             }
         });
-        match answer {
+        let close_window = match answer {
             Some(true) => self.close_now(index),
             Some(false) => {
                 self.confirm_close = None;
                 false
             }
-            None => false,
-        }
+            None => return false,
+        };
+        self.active().focus();
+        close_window
     }
 }
 
