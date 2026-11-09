@@ -1,4 +1,5 @@
-//! Drawing Noob's window: a top bar, the conversation, and the typing box.
+//! Drawing Noob's window: a top bar with a Terminal / Noob switch, and below it
+//! either your real shell (see `terminal`) or Noob's conversation and typing box.
 //!
 //! egui redraws the whole window many times a second. Each time, `ui` below describes
 //! what should be on screen, and reports what was clicked or typed since last time.
@@ -11,6 +12,8 @@ use noob_cli::complete::Choice;
 use noob_cli::engine::{Line, Outcome};
 use noob_cli::terminal::TerminalWindow;
 
+use crate::terminal::TerminalView;
+
 const TOP_BAR_HEIGHT: f32 = 40.0;
 const BOTTOM_BAR_HEIGHT: f32 = 48.0;
 
@@ -22,7 +25,19 @@ const BUTTONS: [(&str, &str); 4] = [
     ("Files", "show files"),
 ];
 
+/// Which view fills the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Your real shell (the default).
+    Terminal,
+    /// Noob's plain-English conversation. In a later stage it moves into a bar
+    /// under the terminal.
+    Noob,
+}
+
 pub struct NoobApp {
+    mode: Mode,
+    terminal: TerminalView,
     chat: Chat,
     typed: String,
     /// Tab choices waiting to be picked, and the part of `typed` they replace.
@@ -40,6 +55,8 @@ impl NoobApp {
     pub fn new() -> Self {
         #[allow(unused_mut)] // only changed when checking how the window looks
         let mut app = NoobApp {
+            mode: Mode::Terminal,
+            terminal: TerminalView::new(),
             chat: Chat::new(Box::new(TerminalWindow)),
             typed: String::new(),
             choices: Vec::new(),
@@ -49,9 +66,12 @@ impl NoobApp {
         // For developers checking how the window looks: NOOB_DEMO="where am i;show files"
         // types those lines at startup. Only in the `screenshot` build, never for users.
         #[cfg(feature = "screenshot")]
-        for line in std::env::var("NOOB_DEMO").unwrap_or_default().split(';') {
-            if let Some(job) = app.chat.send(line) {
-                app.chat.finished(job.run());
+        if let Ok(lines) = std::env::var("NOOB_DEMO") {
+            app.mode = Mode::Noob;
+            for line in lines.split(';') {
+                if let Some(job) = app.chat.send(line) {
+                    app.chat.finished(job.run());
+                }
             }
         }
         app
@@ -314,19 +334,83 @@ impl NoobApp {
 }
 
 impl eframe::App for NoobApp {
+    #[cfg(feature = "screenshot")]
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        crate::devshot::press_keys(raw_input);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "screenshot")]
+        crate::devshot::maybe_take(ui.ctx());
         self.collect();
-        if self.chat.wants_to_quit() {
+        if self.mode == Mode::Noob && self.chat.wants_to_quit() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         // Fixed sizes, so the bars look right from the very first moment.
+        // Over the terminal, the bar takes the terminal's colours so they read as one.
+        let mut bar = egui::Frame::side_top_panel(ui.style());
+        if self.mode == Mode::Terminal {
+            bar = bar.fill(TerminalView::bar_color(ui.visuals().dark_mode));
+        }
         egui::Panel::top("top-bar")
             .exact_size(TOP_BAR_HEIGHT)
-            .show(ui, |ui| self.top_bar(ui));
-        egui::Panel::bottom("bottom-bar")
-            .min_size(BOTTOM_BAR_HEIGHT)
-            .show(ui, |ui| self.bottom_bar(ui));
-        egui::CentralPanel::default().show(ui, |ui| self.conversation(ui));
+            .frame(bar)
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    self.mode_switch(ui);
+                    ui.separator();
+                    match self.mode {
+                        Mode::Terminal => self.terminal_title(ui),
+                        Mode::Noob => self.top_bar(ui),
+                    }
+                });
+            });
+        match self.mode {
+            Mode::Terminal => {
+                // No margin: the terminal paints its own background to the edges.
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| self.terminal.ui(ui));
+            }
+            Mode::Noob => {
+                self.terminal.keep_up();
+                egui::Panel::bottom("bottom-bar")
+                    .min_size(BOTTOM_BAR_HEIGHT)
+                    .show(ui, |ui| self.bottom_bar(ui));
+                egui::CentralPanel::default().show(ui, |ui| self.conversation(ui));
+            }
+        }
+    }
+}
+
+impl NoobApp {
+    /// "Terminal | Noob": which view fills the window.
+    fn mode_switch(&mut self, ui: &mut egui::Ui) {
+        for (mode, label, hint) in [
+            (Mode::Terminal, "Terminal", "Your real shell"),
+            (
+                Mode::Noob,
+                "Noob",
+                "Type plain English, like: make folder photos",
+            ),
+        ] {
+            let chosen = self.mode == mode;
+            if ui
+                .selectable_label(chosen, RichText::new(label).strong())
+                .on_hover_text(hint)
+                .clicked()
+            {
+                self.mode = mode;
+                // Let the newly shown view take the keyboard.
+                ui.memory_mut(|memory| memory.stop_text_input());
+            }
+        }
+    }
+
+    /// The shell's own title (zsh and bash often set it to the folder), if any.
+    fn terminal_title(&self, ui: &mut egui::Ui) {
+        let title = self.terminal.title().unwrap_or("Your shell");
+        ui.add(egui::Label::new(RichText::new(title).weak()).truncate());
     }
 }
 

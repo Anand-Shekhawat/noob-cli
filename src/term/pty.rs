@@ -45,6 +45,12 @@ const EXIT_CHECK_EVERY: Duration = Duration::from_millis(20);
 /// How much we read from the shell in one go.
 const READ_CHUNK: usize = 8 * 1024;
 
+/// Called from the reading thread each time the shell prints something (and
+/// once more when it ends), so a window can wake up and draw it. Waiting this
+/// way means the window sleeps while nothing happens, instead of checking
+/// over and over.
+pub type Wake = Box<dyn Fn() + Send>;
+
 /// Your shell, running in a pseudo-terminal that Noob holds the other end of.
 pub struct Pty {
     /// Our end of the pseudo-terminal: used to resize it.
@@ -61,11 +67,16 @@ impl Pty {
     /// Starts your usual shell: the one in `$SHELL` on a Mac or Linux (zsh, bash…),
     /// PowerShell on Windows.
     pub fn start_shell(size: Size) -> Result<Pty, String> {
-        Pty::start(shell_command(), size)
+        Pty::start(shell_command(), size, Box::new(|| {}))
+    }
+
+    /// Like `start_shell`, and calls `wake` whenever the shell prints something.
+    pub fn start_shell_with_wake(size: Size, wake: Wake) -> Result<Pty, String> {
+        Pty::start(shell_command(), size, wake)
     }
 
     /// Starts any program in a pseudo-terminal of the given size.
-    pub fn start(command: CommandBuilder, size: Size) -> Result<Pty, String> {
+    pub fn start(command: CommandBuilder, size: Size, wake: Wake) -> Result<Pty, String> {
         let pair = native_pty_system()
             .openpty(size.for_pty())
             .map_err(|error| format!("couldn't make a pseudo-terminal: {error}"))?;
@@ -91,7 +102,7 @@ impl Pty {
             master: pair.master,
             writer,
             child,
-            output: read_in_background(reader),
+            output: read_in_background(reader, wake),
         })
     }
 
@@ -179,14 +190,21 @@ fn shell_command() -> CommandBuilder {
     } else {
         // portable-pty's default is the shell in `$SHELL` (or, failing that, the one
         // in your user account), started as a "login shell" just like Terminal does.
-        CommandBuilder::new_default_prog()
+        let mut command = CommandBuilder::new_default_prog();
+        // Tell programs what kind of terminal this is, so `htop`, `nano` and `ls`
+        // know which codes and colours they may use. An app opened from the Dock
+        // has no TERM of its own, and without one those programs refuse to start.
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
+        command.env("TERM_PROGRAM", "Noob");
+        command
     }
 }
 
 /// Reading waits until the shell prints something, which could be never. So a
 /// helper thread does the waiting and passes each piece over a channel, and
 /// Noob's window never freezes. It stops when the pseudo-terminal closes.
-fn read_in_background(mut reader: Box<dyn Read + Send>) -> Receiver<Vec<u8>> {
+fn read_in_background(mut reader: Box<dyn Read + Send>, wake: Wake) -> Receiver<Vec<u8>> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut buffer = [0u8; READ_CHUNK];
@@ -199,9 +217,13 @@ fn read_in_background(mut reader: Box<dyn Read + Send>) -> Receiver<Vec<u8>> {
                     if sender.send(buffer[..count].to_vec()).is_err() {
                         break;
                     }
+                    wake();
                 }
             }
         }
+        // One last wake-up, so whoever is watching notices the shell has ended.
+        drop(sender);
+        wake();
     });
     receiver
 }
@@ -302,6 +324,38 @@ mod tests {
             })
         );
         shell.stop();
+    }
+
+    #[test]
+    fn the_window_is_woken_when_the_shell_prints_and_when_it_ends() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&wakes);
+        let wake: Wake = Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        let mut shell =
+            Pty::start_shell_with_wake(Size { rows: 24, cols: 80 }, wake).expect("shell starts");
+        wait_until_ready(&mut shell);
+        assert!(wakes.load(Ordering::SeqCst) > 0, "the prompt woke us up");
+
+        // On Windows, ConPTY keeps the output open until the pseudo-terminal itself
+        // closes, so the shell ending isn't seen there; the window also checks.
+        if cfg!(windows) {
+            return;
+        }
+        let before = wakes.load(Ordering::SeqCst);
+        shell.end_shell();
+        let started = Instant::now();
+        while wakes.load(Ordering::SeqCst) == before && started.elapsed() < PATIENCE {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            wakes.load(Ordering::SeqCst) > before,
+            "the shell ending woke us up"
+        );
     }
 
     #[test]
