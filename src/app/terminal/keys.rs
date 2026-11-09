@@ -69,11 +69,12 @@ pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
 }
 
 /// What to send so `command` sits in the shell's prompt, ready for you to
-/// press Enter. Whatever was half-typed there is cleared first (Ctrl+U on a
-/// Mac or Linux, Esc in PowerShell). Line breaks and other control characters
+/// press Enter. Whatever was half-typed there is cleared first (Ctrl+E, Ctrl+U
+/// on a Mac or Linux; Esc in PowerShell). Line breaks and other control characters
 /// are dropped, so nothing can run before you press Enter yourself.
 pub fn prompt_bytes(command: &str, powershell: bool) -> Vec<u8> {
-    let clear: &[u8] = if powershell { b"\x1b" } else { b"\x15" };
+    // Ctrl+E first: bash's Ctrl+U only clears what's left of the cursor.
+    let clear: &[u8] = if powershell { b"\x1b" } else { b"\x05\x15" };
     let command: String = command
         .chars()
         .filter(|letter| !letter.is_control())
@@ -339,12 +340,13 @@ mod tests {
     fn a_command_for_the_prompt_clears_the_line_first_and_never_presses_enter() {
         assert_eq!(
             prompt_bytes("mkdir -p photos", false),
-            b"\x15mkdir -p photos".to_vec()
+            b"\x05\x15mkdir -p photos".to_vec(),
+            "Ctrl+E goes to the end of the line, then Ctrl+U clears all of it (bash too)"
         );
         assert_eq!(prompt_bytes("ls", true), b"\x1bls".to_vec());
         assert_eq!(
             prompt_bytes("ls\rrm -rf x\n", false),
-            b"\x15lsrm -rf x".to_vec(),
+            b"\x05\x15lsrm -rf x".to_vec(),
             "no line breaks, so nothing runs by itself"
         );
     }

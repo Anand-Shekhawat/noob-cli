@@ -40,6 +40,11 @@ pub struct NoobBar {
     /// Where the answer to something Noob is doing itself will arrive.
     working: Option<Receiver<Outcome>>,
     wants_focus: bool,
+    /// Noob's starting folder, used when the shell's folder can't be found out.
+    start_folder: Option<std::path::PathBuf>,
+    /// The Enter that sent a line to the bar is still held down: its repeats
+    /// must not reach the terminal and run the command.
+    swallow_enter: bool,
 }
 
 fn input_id() -> egui::Id {
@@ -60,11 +65,16 @@ impl NoobBar {
             about: None,
             working: None,
             wants_focus: false,
+            start_folder: std::env::current_dir().ok(),
+            swallow_enter: false,
         }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, terminal: &mut TerminalView, theme: &Theme) {
         self.collect();
+        if self.swallow_enter {
+            self.swallow_held_enter(ui);
+        }
         if shortcut_pressed(ui) {
             if ui.memory(|memory| memory.has_focus(input_id())) {
                 terminal.focus();
@@ -91,11 +101,50 @@ impl NoobBar {
         }
     }
 
+    /// Drops Enter presses until the Enter key is let go.
+    fn swallow_held_enter(&mut self, ui: &egui::Ui) {
+        ui.input_mut(|input| {
+            let released = input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::Key {
+                        key: Key::Enter,
+                        pressed: false,
+                        ..
+                    }
+                )
+            });
+            input.events.retain(|event| {
+                !matches!(
+                    event,
+                    Event::Key {
+                        key: Key::Enter,
+                        ..
+                    }
+                )
+            });
+            if released || !input.key_down(Key::Enter) {
+                self.swallow_enter = false;
+            }
+        });
+    }
+
+    /// Moves Noob to the shell's folder, so names (and Tab) mean the files you
+    /// see there. If that can't be found out, Noob's starting folder is used.
+    fn follow_shell_folder(&self, terminal: &TerminalView) {
+        if let Some(folder) = terminal
+            .shell_folder()
+            .or_else(|| self.start_folder.clone())
+        {
+            let _ = std::env::set_current_dir(folder);
+        }
+    }
+
     // ── Typing ──────────────────────────────────────────────────────────────
 
     fn input_row(&mut self, ui: &mut egui::Ui, terminal: &mut TerminalView, theme: &Theme) {
         if ui.memory(|memory| memory.has_focus(input_id())) {
-            self.special_keys(ui);
+            self.special_keys(ui, terminal);
         }
         let mut submitted = None;
         ui.horizontal(|ui| {
@@ -121,6 +170,7 @@ impl NoobBar {
             }
             if response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                 submitted = Some(std::mem::take(&mut self.typed));
+                self.swallow_enter = true;
                 // This Enter belongs to the bar. The terminal takes the keyboard
                 // straight away, and must not see it too, or it would run the
                 // command before you had a chance to read it.
@@ -155,7 +205,7 @@ impl NoobBar {
 
     /// Up/down for earlier lines, Tab to finish words. Taken before the text
     /// box sees them, so it doesn't move its cursor instead.
-    fn special_keys(&mut self, ui: &egui::Ui) {
+    fn special_keys(&mut self, ui: &egui::Ui, terminal: &TerminalView) {
         let (up, down, tab) = ui.input_mut(|input| {
             (
                 input.consume_key(Modifiers::NONE, Key::ArrowUp),
@@ -170,6 +220,7 @@ impl NoobBar {
             self.set_typed(ui, line);
         }
         if tab {
+            self.follow_shell_folder(terminal);
             self.finish_word(ui);
         }
     }
@@ -235,10 +286,7 @@ impl NoobBar {
         self.history.push(line);
         self.last_line = line.to_string();
         // Names like "photos" mean the ones in the shell's folder, not Noob's.
-        // (If that can't be found out, Noob's own folder is used.)
-        if let Some(folder) = terminal.shell_folder() {
-            let _ = std::env::set_current_dir(folder);
-        }
+        self.follow_shell_folder(terminal);
         let plan = bar::plan(line, &self.setup);
         self.answer.clear();
         self.about = None;

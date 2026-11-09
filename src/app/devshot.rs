@@ -45,20 +45,26 @@ pub fn press_keys(raw_input: &mut egui::RawInput) {
 }
 
 fn key_events(piece: &str) -> Vec<egui::Event> {
+    // A press and its release, like a real key.
     let press = |name: &str, modifiers: egui::Modifiers| {
-        egui::Key::from_name(name).map(|key| egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers,
-        })
+        egui::Key::from_name(name)
+            .map(|key| {
+                [true, false].map(|pressed| egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                })
+            })
+            .into_iter()
+            .flatten()
     };
     match piece.split_once(':') {
         Some(("text", text)) => vec![egui::Event::Text(text.to_string())],
-        Some(("key", name)) => press(name, egui::Modifiers::NONE).into_iter().collect(),
-        Some(("ctrl", name)) => press(name, egui::Modifiers::CTRL).into_iter().collect(),
-        Some(("cmd", name)) => press(name, egui::Modifiers::COMMAND).into_iter().collect(),
+        Some(("key", name)) => press(name, egui::Modifiers::NONE).collect(),
+        Some(("ctrl", name)) => press(name, egui::Modifiers::CTRL).collect(),
+        Some(("cmd", name)) => press(name, egui::Modifiers::COMMAND).collect(),
         Some(("wheel", lines)) => vec![
             egui::Event::PointerMoved(egui::pos2(400.0, 300.0)),
             egui::Event::MouseWheel {

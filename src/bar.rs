@@ -134,6 +134,12 @@ fn then_for(command: &Command, setup: &Setup) -> Then {
             Some(real) if needs_homebrew(&real, setup) => {
                 hint("Installing on this computer needs Homebrew first. Type: install homebrew")
             }
+            // An invisible character (like a tab) can't be typed into a prompt
+            // safely, and leaving it out would point at a different file.
+            Some(real) if real.chars().any(char::is_control) => Then::Say(vec![Line::Problem(
+                "That name has an invisible character in it, so Noob can't type it for you."
+                    .to_string(),
+            )]),
             Some(real) => Then::Type {
                 command: real,
                 about: about(command),
@@ -303,7 +309,8 @@ mod tests {
         let file = folder.file("old.txt", "bye");
         let plan = plan(&format!("delete {file}"), &mac());
         assert!(plan.ask.is_some(), "deleting asks first");
-        assert_eq!(typed(&plan), format!("trash {file}"));
+        let quoted = real::quote_name(&file, Shell::Unix);
+        assert_eq!(typed(&plan), format!("trash {quoted}"));
     }
 
     #[test]
@@ -332,7 +339,8 @@ mod tests {
         let file = folder.file("notes.txt", "keep me");
         let plan = plan(&format!("write hello into {file}"), &mac());
         assert!(plan.ask.is_some());
-        assert_eq!(typed(&plan), format!("echo hello > {file}"));
+        let quoted = real::quote_name(&file, Shell::Unix);
+        assert_eq!(typed(&plan), format!("echo hello > {quoted}"));
     }
 
     #[test]
@@ -365,6 +373,17 @@ mod tests {
         let plan = plan("install homebrew", &setup);
         assert!(plan.ask.is_some());
         assert!(typed(&plan).contains("curl"), "{plan:?}");
+    }
+
+    #[test]
+    fn a_name_with_an_invisible_character_is_refused_not_changed() {
+        // A tab inside a name can't be typed into a prompt safely; dropping it
+        // would point the command at a different file.
+        let plan = plan("make folder \"a\tb\"", &mac());
+        assert!(
+            matches!(&plan.then, Then::Say(lines) if matches!(lines[..], [Line::Problem(_)])),
+            "{plan:?}"
+        );
     }
 
     #[test]
