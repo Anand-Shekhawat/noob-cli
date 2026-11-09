@@ -33,8 +33,6 @@ pub use palette::Theme;
 use select::{Selection, Spot};
 use session::Session;
 
-/// Letter size in points. Settings for this come in a later stage.
-const FONT_SIZE: f32 = 14.0;
 /// Rows are a little taller than the letters, so lines don't touch.
 const LINE_SPACING: f32 = 1.2;
 /// The cursor is shown for this long, then hidden for this long.
@@ -153,9 +151,10 @@ impl TerminalView {
         self.wants_focus = true;
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        let theme = Theme::for_dark_mode(ui.visuals().dark_mode);
-        let font = FontId::monospace(FONT_SIZE);
+    /// Draws the terminal in `theme`'s colours, with letters `font_size` points tall.
+    pub fn ui(&mut self, ui: &mut egui::Ui, theme: &Theme, font_size: f32) {
+        let theme = *theme;
+        let font = FontId::monospace(font_size);
         let cell = ui.fonts_mut(|fonts| {
             vec2(
                 fonts.glyph_width(&font, 'M'),

@@ -12,7 +12,8 @@
 //! `cmd:K` holds Cmd (Ctrl on Windows and Linux),
 //! `wheel:5` turns the mouse wheel 5 lines up (over the middle of the window),
 //! `sleep:2000` waits two seconds before the next piece.
-//! `NOOB_THEME=light` shows the light look.
+//! Themes and letter size come from `NOOB_SETTINGS_FILE` (a settings file
+//! just for the screenshot, so yours is never touched).
 //!
 //! The picture is a PPM (the simplest picture format there is, so no extra
 //! crate is needed). On a Mac, `sips -s format png shot.ppm --out shot.png`
@@ -95,9 +96,6 @@ fn key_events(piece: &str) -> Vec<egui::Event> {
 
 /// Call once per frame.
 pub fn maybe_take(ctx: &egui::Context) {
-    if std::env::var("NOOB_THEME").as_deref() == Ok("light") {
-        ctx.set_theme(egui::Theme::Light);
-    }
     static STARTED: OnceLock<Instant> = OnceLock::new();
     static ASKED: AtomicBool = AtomicBool::new(false);
     let Ok(path) = std::env::var("NOOB_SHOT_TO") else {
