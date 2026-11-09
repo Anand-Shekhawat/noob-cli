@@ -373,6 +373,7 @@ impl eframe::App for NoobApp {
                     .show(ui, |ui| self.terminal.ui(ui));
             }
             Mode::Noob => {
+                self.terminal.keep_up();
                 egui::Panel::bottom("bottom-bar")
                     .min_size(BOTTOM_BAR_HEIGHT)
                     .show(ui, |ui| self.bottom_bar(ui));

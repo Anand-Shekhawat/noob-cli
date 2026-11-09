@@ -26,6 +26,11 @@ pub fn key_bytes(key: Key, mods: Modifiers, app_cursor: bool) -> Option<Vec<u8>>
     if mods.mac_cmd {
         return None;
     }
+    // Windows reports AltGr (how many keyboards type @, € or {) as Ctrl+Alt.
+    // Those keys mean a letter, not a control code, so send nothing for them.
+    if mods.ctrl && mods.alt && ctrl_byte(key).is_some() {
+        return None;
+    }
     if mods.ctrl
         && !mods.shift
         && let Some(byte) = ctrl_byte(key)
@@ -53,7 +58,13 @@ pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
         return text.into_bytes();
     }
     // Pasted text must not be able to end the paste early and type commands.
-    let text = text.replace("\x1b[201~", "");
+    // Removing just the end marker isn't enough (`ESC[20` + marker + `1~`
+    // rebuilds one), so every escape character goes, including the one-byte
+    // form some terminals accept.
+    let text: String = text
+        .chars()
+        .filter(|letter| *letter != '\x1b' && *letter != '\u{9b}')
+        .collect();
     [PASTE_START, text.as_bytes(), PASTE_END].concat()
 }
 
@@ -282,6 +293,36 @@ mod tests {
     }
 
     #[test]
+    fn a_hidden_end_marker_cannot_rebuild_itself_inside_a_paste() {
+        let sneaky = "a\x1b[20\x1b[201~1~rm -rf x\n";
+        let sent = paste_bytes(sneaky, true);
+        let inner = &sent[PASTE_START.len()..sent.len() - PASTE_END.len()];
+        assert!(
+            !inner.contains(&0x1b),
+            "no escape codes survive inside a bracketed paste: {inner:?}"
+        );
+    }
+
+    #[test]
+    fn ctrl_alt_letters_send_nothing_because_windows_uses_them_for_altgr() {
+        let altgr = Modifiers {
+            ctrl: true,
+            alt: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(
+            send(Key::Q, altgr),
+            None,
+            "AltGr+Q types @ on a German keyboard"
+        );
+        assert_eq!(
+            send(Key::ArrowLeft, altgr),
+            Some(b"\x1b[1;7D".to_vec()),
+            "special keys still work"
+        );
+    }
+
+    #[test]
     fn pasting_turns_new_lines_into_enter() {
         assert_eq!(paste_bytes("ls\npwd\r\n", false), b"ls\rpwd\r".to_vec());
     }
@@ -294,8 +335,8 @@ mod tests {
         );
         assert_eq!(
             paste_bytes("a\x1b[201~rm -rf x\n", true),
-            b"\x1b[200~arm -rf x\r\x1b[201~".to_vec(),
-            "an end marker inside the paste is removed"
+            b"\x1b[200~a[201~rm -rf x\r\x1b[201~".to_vec(),
+            "an end marker inside the paste loses its escape, so it is just text"
         );
     }
 }

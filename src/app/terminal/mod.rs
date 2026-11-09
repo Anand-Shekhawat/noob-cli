@@ -94,6 +94,14 @@ impl TerminalView {
         Theme::for_dark_mode(dark_mode).bar
     }
 
+    /// Takes in the shell's output while another view is shown, so a busy
+    /// program (like `yes`) can't pile up output in memory meanwhile.
+    pub fn keep_up(&mut self) {
+        if let Some(State::Running(session)) = &mut self.state {
+            session.pump();
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let theme = Theme::for_dark_mode(ui.visuals().dark_mode);
         let font = FontId::monospace(FONT_SIZE);
