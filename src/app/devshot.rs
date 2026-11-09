@@ -10,7 +10,8 @@
 //! so the real keyboard path can be checked too. Pieces are split by `|`:
 //! `text:echo hi` types text, `key:Enter` presses a key, `ctrl:C` holds Ctrl,
 //! `cmd:K` holds Cmd (Ctrl on Windows and Linux),
-//! `wheel:5` turns the mouse wheel 5 lines up (over the middle of the window).
+//! `wheel:5` turns the mouse wheel 5 lines up (over the middle of the window),
+//! `sleep:2000` waits two seconds before the next piece.
 //! `NOOB_THEME=light` shows the light look.
 //!
 //! The picture is a PPM (the simplest picture format there is, so no extra
@@ -38,9 +39,22 @@ pub fn press_keys(raw_input: &mut egui::RawInput) {
     if STARTED.get_or_init(Instant::now).elapsed() < KEYS_AFTER {
         return;
     }
+    // `sleep:2000` waits two seconds before the next piece.
+    static WAKE_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+    let Ok(mut wake_at) = WAKE_AT.lock() else {
+        return;
+    };
+    if wake_at.is_some_and(|at| Instant::now() < at) {
+        return;
+    }
     let index = NEXT.fetch_add(1, Ordering::SeqCst);
-    if let Some(piece) = keys.split('|').nth(index) {
-        raw_input.events.extend(key_events(piece));
+    match keys.split('|').nth(index) {
+        Some(piece) if piece.starts_with("sleep:") => {
+            let ms = piece["sleep:".len()..].parse().unwrap_or(0);
+            *wake_at = Some(Instant::now() + Duration::from_millis(ms));
+        }
+        Some(piece) => raw_input.events.extend(key_events(piece)),
+        None => {}
     }
 }
 

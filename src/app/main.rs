@@ -5,6 +5,7 @@
 mod bar;
 #[cfg(feature = "screenshot")]
 mod devshot;
+mod tabs;
 mod terminal;
 mod view;
 
