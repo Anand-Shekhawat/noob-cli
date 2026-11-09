@@ -14,6 +14,7 @@
 //! job (it knows where the cursor is), so whatever reads this output must reply.
 
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -67,12 +68,17 @@ impl Pty {
     /// Starts your usual shell: the one in `$SHELL` on a Mac or Linux (zsh, bash…),
     /// PowerShell on Windows.
     pub fn start_shell(size: Size) -> Result<Pty, String> {
-        Pty::start(shell_command(), size, Box::new(|| {}))
+        Pty::start(shell_command(None), size, Box::new(|| {}))
     }
 
     /// Like `start_shell`, and calls `wake` whenever the shell prints something.
-    pub fn start_shell_with_wake(size: Size, wake: Wake) -> Result<Pty, String> {
-        Pty::start(shell_command(), size, wake)
+    /// With a `folder`, the shell starts there (a new tab opens where you were).
+    pub fn start_shell_with_wake(
+        size: Size,
+        wake: Wake,
+        folder: Option<&Path>,
+    ) -> Result<Pty, String> {
+        Pty::start(shell_command(folder), size, wake)
     }
 
     /// Starts any program in a pseudo-terminal of the given size.
@@ -201,8 +207,16 @@ impl Drop for Pty {
     }
 }
 
-/// The command for your usual shell.
-fn shell_command() -> CommandBuilder {
+/// The command for your usual shell, starting in `folder` if there is one.
+fn shell_command(folder: Option<&Path>) -> CommandBuilder {
+    let mut command = plain_shell_command();
+    if let Some(folder) = folder.filter(|folder| folder.is_dir()) {
+        command.cwd(folder);
+    }
+    command
+}
+
+fn plain_shell_command() -> CommandBuilder {
     if cfg!(windows) {
         // `-NoLogo` skips the copyright banner PowerShell prints at the start.
         let mut command = CommandBuilder::new("powershell.exe");
@@ -357,8 +371,8 @@ mod tests {
         let wake: Wake = Box::new(move || {
             counter.fetch_add(1, Ordering::SeqCst);
         });
-        let mut shell =
-            Pty::start_shell_with_wake(Size { rows: 24, cols: 80 }, wake).expect("shell starts");
+        let mut shell = Pty::start_shell_with_wake(Size { rows: 24, cols: 80 }, wake, None)
+            .expect("shell starts");
         wait_until_ready(&mut shell);
         assert!(wakes.load(Ordering::SeqCst) > 0, "the prompt woke us up");
 
@@ -377,6 +391,19 @@ mod tests {
             wakes.load(Ordering::SeqCst) > before,
             "the shell ending woke us up"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_can_start_in_a_chosen_folder() {
+        let folder = std::env::temp_dir().canonicalize().expect("temp folder");
+        let shell =
+            Pty::start_shell_with_wake(Size { rows: 24, cols: 80 }, Box::new(|| {}), Some(&folder))
+                .expect("shell starts");
+        let pid = shell.process_id().expect("the shell has a number");
+        let found = crate::term::folder::of_process(pid).and_then(|path| path.canonicalize().ok());
+        assert_eq!(found, Some(folder));
+        shell.stop();
     }
 
     #[cfg(unix)]

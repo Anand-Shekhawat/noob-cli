@@ -27,12 +27,19 @@ pub struct Session {
 }
 
 impl Session {
-    /// Starts your shell at `rows` × `cols`. `ctx` is woken whenever it prints.
-    pub fn start(rows: usize, cols: usize, ctx: &egui::Context) -> Result<Session, String> {
+    /// Starts your shell at `rows` × `cols`, in `folder` if given. `ctx` is
+    /// woken whenever it prints.
+    pub fn start(
+        rows: usize,
+        cols: usize,
+        ctx: &egui::Context,
+        folder: Option<&std::path::Path>,
+    ) -> Result<Session, String> {
         let ctx = ctx.clone();
         let pty = Pty::start_shell_with_wake(
             pty_size(rows, cols),
             Box::new(move || ctx.request_repaint()),
+            folder,
         )?;
         Ok(Session {
             pty,

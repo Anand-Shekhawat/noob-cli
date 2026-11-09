@@ -1,5 +1,6 @@
-//! Drawing Noob's window: your real shell fills it (see `terminal`), with the
-//! Noob bar along the bottom (see `bar`) for asking in plain English.
+//! Drawing Noob's window: your real shell fills it (see `terminal`), in tabs
+//! (see `tabs`), with the Noob bar along the bottom (see `bar`) for asking in
+//! plain English.
 //!
 //! egui redraws the whole window many times a second. Each time, `ui` below describes
 //! what should be on screen, and reports what was clicked or typed since last time.
@@ -7,7 +8,8 @@
 use eframe::egui;
 
 use crate::bar::NoobBar;
-use crate::terminal::{TerminalView, Theme};
+use crate::tabs::Tabs;
+use crate::terminal::Theme;
 
 /// Space around the Noob bar's contents.
 const BAR_MARGIN: egui::Margin = egui::Margin {
@@ -18,7 +20,7 @@ const BAR_MARGIN: egui::Margin = egui::Margin {
 };
 
 pub struct NoobApp {
-    terminal: TerminalView,
+    tabs: Tabs,
     bar: NoobBar,
     /// The window title last set, so it's only changed when the shell's changes.
     title: String,
@@ -27,7 +29,7 @@ pub struct NoobApp {
 impl NoobApp {
     pub fn new() -> Self {
         NoobApp {
-            terminal: TerminalView::new(),
+            tabs: Tabs::new(),
             bar: NoobBar::new(),
             title: String::new(),
         }
@@ -36,7 +38,7 @@ impl NoobApp {
     /// The shell's own title (often "you@computer:~/folder") in the window's
     /// title bar, so you can always see where you are.
     fn update_title(&mut self, ctx: &egui::Context) {
-        let title = match self.terminal.title() {
+        let title = match self.tabs.active_title() {
             Some(shell) => format!("{shell} — Noob"),
             None => "Noob".to_string(),
         };
@@ -58,18 +60,38 @@ impl eframe::App for NoobApp {
         crate::devshot::maybe_take(ui.ctx());
         let theme = Theme::for_dark_mode(ui.visuals().dark_mode);
 
-        // The bar goes first, so its shortcut keys are taken before the terminal
-        // sees them; it's drawn at the bottom either way.
+        // Tab shortcuts are taken first, so they never reach the shell.
+        let mut close_window = self.tabs.shortcuts(ui);
+        self.tabs.keep_up_in_background();
+        if self.tabs.strip_wanted() {
+            let strip_frame = egui::Frame::side_top_panel(ui.style())
+                .fill(theme.bar)
+                .inner_margin(egui::Margin {
+                    left: 8,
+                    right: 8,
+                    top: 6,
+                    bottom: 0,
+                });
+            egui::Panel::top("tab-strip")
+                .frame(strip_frame)
+                .show_separator_line(false)
+                .show(ui, |ui| close_window |= self.tabs.strip(ui, &theme));
+        }
+        // The bar goes before the terminal, so its shortcut keys are taken
+        // before the terminal sees them; it's drawn at the bottom either way.
         let bar_frame = egui::Frame::side_top_panel(ui.style())
             .fill(theme.bar)
             .inner_margin(BAR_MARGIN);
         egui::Panel::bottom("noob-bar")
             .frame(bar_frame)
-            .show(ui, |ui| self.bar.ui(ui, &mut self.terminal, &theme));
+            .show(ui, |ui| self.bar.ui(ui, self.tabs.active(), &theme));
         // No margin: the terminal paints its own background to the edges.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ui, |ui| self.terminal.ui(ui));
+            .show(ui, |ui| self.tabs.active().ui(ui));
+        if close_window {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         self.update_title(ui.ctx());
     }
 }

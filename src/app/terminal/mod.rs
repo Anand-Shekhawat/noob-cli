@@ -63,6 +63,8 @@ pub struct TerminalView {
     blink_from: Instant,
     /// Take the keyboard on the next frame (after the Noob bar typed something).
     wants_focus: bool,
+    /// Where the shell starts (a new tab opens in the folder you were in).
+    start_folder: Option<std::path::PathBuf>,
     /// Lines typed for you at the start (developer screenshots only).
     #[cfg(feature = "screenshot")]
     demo: Vec<String>,
@@ -70,7 +72,13 @@ pub struct TerminalView {
 
 impl TerminalView {
     pub fn new() -> Self {
+        TerminalView::starting_in(None)
+    }
+
+    /// A terminal whose shell starts in `folder` (or the usual place if `None`).
+    pub fn starting_in(folder: Option<std::path::PathBuf>) -> Self {
         TerminalView {
+            start_folder: folder,
             state: None,
             scroll: 0,
             wheel: 0.0,
@@ -122,6 +130,22 @@ impl TerminalView {
             self.blink_from = Instant::now();
             self.wants_focus = true;
         }
+    }
+
+    /// Takes in the shell's output while this terminal isn't shown (another tab
+    /// is), so it doesn't pile up. True if something new arrived.
+    pub fn keep_up(&mut self) -> bool {
+        match &mut self.state {
+            Some(State::Running(session)) => session.pump(),
+            _ => false,
+        }
+    }
+
+    /// Is a program (like nano, or a download) still running in this shell?
+    /// Closing the tab would stop it, so Noob asks first.
+    pub fn is_running_program(&self) -> bool {
+        self.session()
+            .is_some_and(|session| session.ended().is_none() && session.busy().is_some())
     }
 
     /// Hands the keyboard back to the terminal.
@@ -262,7 +286,7 @@ impl TerminalView {
         };
         self.scroll = 0;
         self.selection = None;
-        match Session::start(rows, cols, ctx) {
+        match Session::start(rows, cols, ctx, self.start_folder.as_deref()) {
             Ok(session) => State::Running(Box::new(session)),
             Err(why) => State::Failed(why),
         }
@@ -455,6 +479,11 @@ fn scroll_by(scroll: usize, lines: f32, history: usize) -> usize {
 /// into the shell, a moment after it starts. Never in builds for users.
 #[cfg(feature = "screenshot")]
 fn demo_lines() -> Vec<String> {
+    // Only the first terminal gets them, not every new tab.
+    static GIVEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if GIVEN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Vec::new();
+    }
     std::env::var("NOOB_TERMINAL_DEMO")
         .unwrap_or_default()
         .split(';')
