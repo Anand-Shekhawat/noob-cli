@@ -1,8 +1,15 @@
 # Noob CLI
 
 A command line for beginners. Instead of remembering `mkdir`, `cp -R` or `grep -rni`,
-you type plain English. Noob does it safely, then shows you the real command it
-matches, so you learn the real ones as you go.
+you type plain English. Noob shows you the real command it matches, so you learn the
+real ones as you go.
+
+Noob comes two ways:
+
+- **The Noob app**: a real terminal (your own shell, with tabs) and a **Noob bar**
+  along the bottom. Type `make folder photos` in the bar, and Noob writes
+  `mkdir -p photos` into the terminal for you. You press Enter to run it.
+- **The `noob` command**, for the terminal you already use:
 
 ```
 noob photos> copy cat.jpg to backup
@@ -26,7 +33,7 @@ irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/inst
 
 It installs for just you (no administrator needed), checks the download's
 fingerprint (its SHA-256 checksum), and adds Noob to your PATH. To install one exact
-version: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/install.ps1))) -Version v0.3.0`. Noob isn't code-signed yet, so Windows may
+version: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Anand-Shekhawat/noob-cli/main/scripts/install.ps1))) -Version v1.0.0`. Noob isn't code-signed yet, so Windows may
 show a SmartScreen warning the first time: choose "More info", then "Run anyway".
 
 **From the source code**, if you have Rust: `cargo install --path .`
@@ -39,11 +46,11 @@ Then type `noob` to open the `noob>` prompt. Type `help` to see everything, or `
 
 You can also run one phrase straight from your normal terminal: `noob make folder photos`.
 
-## Noob's own window
+## The Noob app
 
-Noob also comes as an app with its own window and icon: type at the bottom, and
-answers appear above like a chat, in colour. Risky things ask with Yes and No
-buttons, and quick buttons at the top show your files, go back, go home, or show help.
+The app is a real terminal: it runs your usual shell (zsh on a Mac, PowerShell on
+Windows), with colours, full-screen programs like `nano` and `top`, and copy and paste.
+Along the bottom is the **Noob bar**, where you can ask in plain English.
 
 - **Mac**: `brew install --cask anand-shekhawat/tap/noob-app`, or download
   `Noob-…-apple-darwin.zip` from the [latest release](https://github.com/Anand-Shekhawat/noob-cli/releases/latest)
@@ -55,9 +62,43 @@ Noob isn't signed by Apple yet (that costs money each year), so the first time y
 open it, macOS may say it can't be opened. Go to **System Settings → Privacy &
 Security** and click **Open Anyway** next to Noob. You only need to do this once.
 
-Installing, uninstalling and updating tools open a terminal window, because
-installers sometimes ask for your password, and only a real terminal hands that
-safely to macOS or Windows. Noob never sees it.
+### The Noob bar
+
+Press **⌘K** (Ctrl+K on Windows, Ctrl+Shift+K on Linux) or click the bar, and type
+what you want, like `make folder photos` or `delete old.txt`.
+
+- Noob writes the real command into the terminal and says in one line what it does.
+  **Nothing runs until you press Enter** in the terminal yourself.
+- Risky things (deleting, replacing a file's text, installing) ask first, with Yes and No.
+- Deleting always goes to the Trash (`trash` on a Mac), never `rm`.
+- Names mean the files in the folder your terminal is in, and **Tab** finishes them.
+- If a program like `nano` is open, the bar waits and keeps what you typed.
+- `help` lists everything Noob understands.
+
+### Tabs
+
+**⌘T** opens a new tab in the folder you were in, **⌘W** closes it, **⌘1–9** switch,
+and **⌘⇧[ / ⌘⇧]** go left and right (on Windows and Linux: **Ctrl+Shift** with the
+same keys). Tabs you aren't looking at keep running, and get a dot when something new
+appears. Closing a tab where something is still running asks first.
+
+### Settings
+
+**⌘+ / ⌘− / ⌘0** make the letters bigger, smaller or normal (Ctrl on Windows and
+Linux). **⌘,** opens Settings, with four colour choices: follow my computer, dark,
+light, and high contrast. Noob remembers them in a small text file you can read:
+`~/Library/Application Support/Noob/settings.txt` on a Mac,
+`%APPDATA%\Noob\settings.txt` on Windows, `~/.config/noob/settings.txt` on Linux.
+
+### Known limits
+
+- On Windows, the Noob bar can't yet see which folder PowerShell is in, so its
+  checks (like "does this file exist?") look in your home folder. Commands it
+  types still run in the right place.
+- On Windows, letters typed with AltGr (like `@` on a German keyboard) don't reach
+  the terminal yet.
+- Nobody has tried the app on a real Windows PC yet (it's built and tested on
+  Windows automatically). If you do, please tell us how it went.
 
 ## Installing tools and apps
 
@@ -160,9 +201,14 @@ Colours switch off automatically when the output isn't a terminal, or when the
 | `src/lib.rs` | Noob's engine as a library, shared by the terminal `noob` and the app |
 | `src/engine.rs` | Runs one line: understand, check, ask, do it, and describe what happened |
 | `src/main.rs` | The terminal `noob`: one phrase, or the `noob>` prompt |
-| `src/app/` | Noob's window (`--features app`): `main.rs` starts it, `view.rs` draws it |
-| `src/chat.rs` | The window's conversation and Yes/No questions, with no window code (so it's tested) |
-| `src/terminal.rs` | Opens a terminal window for installers |
+| `src/app/` | The Noob app (`--features app`): `main.rs` starts it, `view.rs` lays out the window |
+| `src/app/terminal/` | Drawing the terminal: keys to bytes, colours, selection, scrolling |
+| `src/app/bar.rs` | The Noob bar under the terminal |
+| `src/app/tabs/` | Tabs: the tab list, shortcuts and tab names |
+| `src/app/settings/` | Letter size and colours, and the settings file |
+| `src/term/` | Noob's own terminal engine: `pty` runs your shell, `parser` reads its escape codes, `grid` keeps the screen, `folder` finds the shell's folder |
+| `src/bar.rs` | Decides what the Noob bar does with a sentence (type a command, ask first, or answer) |
+| `src/chat.rs`, `src/terminal.rs` | The old chat window's logic; no longer used by the app (to be removed) |
 | `src/complete.rs` | Tab completion, used by both |
 | `src/table.rs` | **The command table**: every phrase, example and help line, written once |
 | `src/parser.rs` | Turns your words (and "quoted names") into a `Command` |
@@ -191,12 +237,12 @@ The table tests check that your example really runs your command.
 ## Making a release
 
 1. Put the new version in `Cargo.toml`, commit, and merge to `main`.
-2. Tag it and push the tag: `git tag v0.3.0 && git push origin v0.3.0`.
+2. Tag it and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
    GitHub builds Noob for Mac (Apple chip and Intel), Windows and Linux, attaches
    the downloads to a Release, and tries the Windows installer on a fresh PC.
 3. Update the Homebrew tap:
-   `scripts/homebrew-formula.sh v0.4.0 > ../homebrew-tap/Formula/noob.rb` and
-   `scripts/homebrew-cask.sh v0.4.0 > ../homebrew-tap/Casks/noob-app.rb`, then commit
+   `scripts/homebrew-formula.sh vX.Y.Z > ../homebrew-tap/Formula/noob.rb` and
+   `scripts/homebrew-cask.sh vX.Y.Z > ../homebrew-tap/Casks/noob-app.rb`, then commit
    and push the tap.
 
 ## Checks
