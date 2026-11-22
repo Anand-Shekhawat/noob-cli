@@ -25,6 +25,14 @@ noob photos> copy cat.jpg to backup
 brew install anand-shekhawat/tap/noob
 ```
 
+Newer versions of Homebrew first ask you to trust a tap that isn't Homebrew's own.
+If it says `Refusing to load … from untrusted tap anand-shekhawat/tap`, run this once,
+then install again:
+
+```bash
+brew trust anand-shekhawat/tap
+```
+
 **Windows**, in PowerShell:
 
 ```powershell
@@ -52,7 +60,8 @@ The app is a real terminal: it runs your usual shell (zsh on a Mac, PowerShell o
 Windows), with colours, full-screen programs like `nano` and `top`, and copy and paste.
 Along the bottom is the **Noob bar**, where you can ask in plain English.
 
-- **Mac**: `brew install --cask anand-shekhawat/tap/noob-app`, or download
+- **Mac**: `brew install --cask anand-shekhawat/tap/noob-app` (if Homebrew says the
+  tap is untrusted, run `brew trust anand-shekhawat/tap` once first), or download
   `Noob-…-apple-darwin.zip` from the [latest release](https://github.com/Anand-Shekhawat/noob-cli/releases/latest)
   (`aarch64` for Macs with Apple chips, `x86_64` for Intel) and drag `Noob.app` into Applications.
 - **Windows**: the PowerShell installer above also installs the app and adds
