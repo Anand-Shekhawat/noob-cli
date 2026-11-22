@@ -81,6 +81,36 @@ impl Theme {
 }
 
 impl Theme {
+    /// White text on pure black, with strong, bright colours: the biggest
+    /// difference between letters and background, for easier reading.
+    pub fn high_contrast() -> Theme {
+        Theme {
+            fg: rgb(0xff, 0xff, 0xff),
+            bg: rgb(0x00, 0x00, 0x00),
+            bar: rgb(0x14, 0x14, 0x14),
+            cursor: rgb(0xff, 0xd7, 0x00),
+            selection: Color32::from_rgba_unmultiplied(0x40, 0x9c, 0xff, 0x80),
+            ansi: [
+                rgb(0x3a, 0x3a, 0x3a),
+                rgb(0xff, 0x5f, 0x5f),
+                rgb(0x5f, 0xff, 0x5f),
+                rgb(0xff, 0xff, 0x5f),
+                rgb(0x6c, 0xb6, 0xff),
+                rgb(0xff, 0x7f, 0xff),
+                rgb(0x5f, 0xff, 0xff),
+                rgb(0xe8, 0xe8, 0xe8),
+                rgb(0xa8, 0xa8, 0xa8),
+                rgb(0xff, 0x87, 0x87),
+                rgb(0x87, 0xff, 0x87),
+                rgb(0xff, 0xff, 0x87),
+                rgb(0x8f, 0xc8, 0xff),
+                rgb(0xff, 0xa0, 0xff),
+                rgb(0x87, 0xff, 0xff),
+                rgb(0xff, 0xff, 0xff),
+            ],
+        }
+    }
+
     /// The theme that suits egui's light or dark look.
     pub fn for_dark_mode(dark: bool) -> Theme {
         if dark { Theme::dark() } else { Theme::light() }
@@ -144,6 +174,44 @@ mod tests {
         Look {
             fg,
             ..Look::default()
+        }
+    }
+
+    /// How much brighter the brighter colour is (1 = the same, 21 = black on white).
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let light = |colour: Color32| {
+            let channel = |value: u8| {
+                let value = f32::from(value) / 255.0;
+                if value <= 0.039_28 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(colour.r())
+                + 0.7152 * channel(colour.g())
+                + 0.0722 * channel(colour.b())
+        };
+        let (high, low) = (light(a).max(light(b)), light(a).min(light(b)));
+        (high + 0.05) / (low + 0.05)
+    }
+
+    #[test]
+    fn high_contrast_has_more_contrast_than_the_normal_themes() {
+        let strong = Theme::high_contrast();
+        let ratio = contrast(strong.fg, strong.bg);
+        assert!(ratio > contrast(Theme::dark().fg, Theme::dark().bg));
+        assert!(ratio > contrast(Theme::light().fg, Theme::light().bg));
+        assert!(ratio >= 7.0, "the strictest reading guideline (WCAG AAA)");
+    }
+
+    #[test]
+    fn normal_text_is_easy_to_read_in_every_theme() {
+        for theme in [Theme::dark(), Theme::light(), Theme::high_contrast()] {
+            assert!(
+                contrast(theme.fg, theme.bg) >= 4.5,
+                "WCAG AA for normal text"
+            );
         }
     }
 

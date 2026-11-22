@@ -5,6 +5,7 @@
 mod bar;
 #[cfg(feature = "screenshot")]
 mod devshot;
+mod settings;
 mod tabs;
 mod terminal;
 mod view;
@@ -39,6 +40,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Noob",
         options,
-        Box::new(|_| Ok(Box::new(view::NoobApp::new()))),
+        Box::new(|creation| Ok(Box::new(view::NoobApp::new(&creation.egui_ctx)))),
     )
 }
