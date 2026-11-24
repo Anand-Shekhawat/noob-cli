@@ -50,15 +50,16 @@ pub fn check_ready(command: &Command) -> Result<(), ActionError> {
     }
 }
 
-/// Checks that copying, moving or renaming won't replace something. The real
-/// `cp` and `mv` replace files without a word; Noob never does, so whoever is
-/// about to hand the real command to a shell must check this first.
-pub fn check_wont_replace(command: &Command) -> Result<(), ActionError> {
+/// Checks the safety rules Noob's own actions follow but the real commands
+/// don't: `cp` and `mv` replace files without a word, and `>` writes through
+/// shortcuts. Whoever hands a real command to a shell must check this first.
+pub fn check_safe_in_shell(command: &Command) -> Result<(), ActionError> {
     match command {
         Command::Copy { from, to } | Command::Move { from, to } => {
             moving::check_destination(from, to)
         }
         Command::Rename { from, to } => moving::check_rename(from, to),
+        Command::Write { file, .. } | Command::Add { file, .. } => files::check_writable(file),
         _ => Ok(()),
     }
 }

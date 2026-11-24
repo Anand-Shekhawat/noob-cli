@@ -104,7 +104,7 @@ pub(super) fn add(text: &str, file: &str) -> Result<Reply, ActionError> {
 }
 
 /// Writing needs a normal file (or nothing yet) in a folder that exists.
-fn check_writable(file: &str) -> Result<(), ActionError> {
+pub(super) fn check_writable(file: &str) -> Result<(), ActionError> {
     let path = Path::new(file);
     if is_shortcut(path) {
         return Err(ActionError::Shortcut(file.to_string()));

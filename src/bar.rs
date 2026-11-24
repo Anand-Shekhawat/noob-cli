@@ -119,7 +119,7 @@ pub fn plan(input: &str, setup: &Setup, folder: ShellFolder) -> Plan {
         Next::Ask { question, command } => (Some(question), command),
         Next::Run(command) => (None, command),
     };
-    if let Err(problem) = actions::check_wont_replace(&command) {
+    if let Err(problem) = actions::check_safe_in_shell(&command) {
         return say(vec![Line::Problem(problem.to_string())]);
     }
     let then = then_for(&command, setup);
@@ -491,6 +491,24 @@ mod tests {
         assert!(plan.ask.is_some());
         let quoted = real::quote_name(&file, Shell::Unix);
         assert_eq!(typed(&plan), format!("echo hello > {quoted}"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writing_through_a_shortcut_is_refused_like_noob_itself_does() {
+        // The shell's `>` follows a shortcut and empties the file it points to.
+        let folder = Folder::new("write-link");
+        let real_file = folder.file("notes.txt", "keep me");
+        let link = folder.0.join("link.txt");
+        std::os::unix::fs::symlink(&real_file, &link).expect("make shortcut");
+        let link = link.display();
+        for line in [
+            format!("write hello into \"{link}\""),
+            format!("add hello to \"{link}\""),
+        ] {
+            let plan = plan(&line, &mac());
+            assert!(refused(&plan), "{line}: {plan:?}");
+        }
     }
 
     #[test]
