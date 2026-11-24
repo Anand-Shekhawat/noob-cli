@@ -8,10 +8,11 @@
 //! Cmd+K (Ctrl+K on Windows, Ctrl+Shift+K on Linux) jumps between the bar and
 //! the terminal; Esc in the bar goes back to the terminal.
 
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use eframe::egui::{self, Event, Key, Modifiers, RichText};
-use noob_cli::bar::{self, Setup, Then};
+use noob_cli::bar::{self, Setup, ShellFolder, Then};
 use noob_cli::complete::{self, Choice};
 use noob_cli::engine::{self, Line, Outcome};
 
@@ -22,6 +23,28 @@ use crate::terminal::{TerminalView, Theme};
 const MAX_ANSWER_HEIGHT: f32 = 220.0;
 const INPUT_TEXT_SIZE: f32 = 15.0;
 
+/// Which terminal, and which folder, a question was about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Place {
+    terminal: u64,
+    folder: Option<PathBuf>,
+}
+
+impl Place {
+    fn of(terminal: &TerminalView) -> Place {
+        Place {
+            terminal: terminal.id(),
+            folder: terminal.shell_folder(),
+        }
+    }
+}
+
+struct Waiting {
+    question: String,
+    then: Then,
+    asked_in: Place,
+}
+
 pub struct NoobBar {
     setup: Setup,
     typed: String,
@@ -30,7 +53,7 @@ pub struct NoobBar {
     choices: Vec<Choice>,
     choices_from: usize,
     /// A risky plan waiting for Yes or No.
-    waiting: Option<(String, Then)>,
+    waiting: Option<Waiting>,
     /// The last line sent, put back in the box if the terminal was busy.
     last_line: String,
     /// What Noob said last.
@@ -41,7 +64,7 @@ pub struct NoobBar {
     working: Option<Receiver<Outcome>>,
     wants_focus: bool,
     /// Noob's starting folder, used when the shell's folder can't be found out.
-    start_folder: Option<std::path::PathBuf>,
+    start_folder: Option<PathBuf>,
     /// The Enter that sent a line to the bar is still held down: its repeats
     /// must not reach the terminal and run the command.
     swallow_enter: bool,
@@ -130,14 +153,18 @@ impl NoobBar {
     }
 
     /// Moves Noob to the shell's folder, so names (and Tab) mean the files you
-    /// see there. If that can't be found out, Noob's starting folder is used.
-    fn follow_shell_folder(&self, terminal: &TerminalView) {
-        if let Some(folder) = terminal
-            .shell_folder()
-            .or_else(|| self.start_folder.clone())
+    /// see there. Says whether that worked; if not, Noob goes to its starting
+    /// folder, and a bare name can't be trusted to mean the same file.
+    fn follow_shell_folder(&self, terminal: &TerminalView) -> ShellFolder {
+        if let Some(folder) = terminal.shell_folder()
+            && std::env::set_current_dir(folder).is_ok()
         {
+            return ShellFolder::Known;
+        }
+        if let Some(folder) = &self.start_folder {
             let _ = std::env::set_current_dir(folder);
         }
+        ShellFolder::Unknown
     }
 
     // ── Typing ──────────────────────────────────────────────────────────────
@@ -286,12 +313,18 @@ impl NoobBar {
         self.history.push(line);
         self.last_line = line.to_string();
         // Names like "photos" mean the ones in the shell's folder, not Noob's.
-        self.follow_shell_folder(terminal);
-        let plan = bar::plan(line, &self.setup);
+        let folder = self.follow_shell_folder(terminal);
+        let plan = bar::plan(line, &self.setup, folder);
         self.answer.clear();
         self.about = None;
         match plan.ask {
-            Some(question) => self.waiting = Some((question, plan.then)),
+            Some(question) => {
+                self.waiting = Some(Waiting {
+                    question,
+                    then: plan.then,
+                    asked_in: Place::of(terminal),
+                });
+            }
             None => self.carry_out(ctx, plan.then, terminal),
         }
     }
@@ -352,10 +385,14 @@ impl NoobBar {
     /// "⚠ Move notes.txt to the Trash?" with Yes and No. Y and N work too, and
     /// Esc means No. While it's showing, keys don't reach the terminal.
     fn question_row(&mut self, ui: &mut egui::Ui, terminal: &mut TerminalView, theme: &Theme) {
-        let Some((question, _)) = &self.waiting else {
+        let Some(waiting) = &self.waiting else {
             return;
         };
-        let question = question.clone();
+        if waiting.asked_in.terminal != terminal.id() {
+            self.drop_question(); // you switched tabs: the question was about the other one
+            return;
+        }
+        let question = waiting.question.clone();
         let (yes_key, no_key) = ui.input_mut(|input| {
             let pressed = |input: &egui::InputState, wanted: Key| {
                 input.events.iter().any(|event| {
@@ -391,15 +428,26 @@ impl NoobBar {
         let Some(yes) = answer else {
             return;
         };
-        let Some((_, then)) = self.waiting.take() else {
+        let Some(waiting) = self.waiting.take() else {
             return;
         };
-        if yes {
-            self.carry_out(ui.ctx(), then, terminal);
+        if yes && waiting.asked_in != Place::of(terminal) {
+            self.drop_question(); // the shell has moved to another folder since
+        } else if yes {
+            self.carry_out(ui.ctx(), waiting.then, terminal);
         } else {
             self.answer = engine::declined().lines;
             terminal.focus();
         }
+    }
+
+    /// Forgets the question, because it's no longer about what you're looking at.
+    fn drop_question(&mut self) {
+        self.waiting = None;
+        self.answer = vec![Line::Hint(
+            "The tab or folder changed, so Noob didn't do anything. Ask again if you still want it."
+                .to_string(),
+        )];
     }
 
     // ── Showing Noob's answer ───────────────────────────────────────────────
@@ -531,6 +579,19 @@ mod tests {
             history.push(line);
         }
         history
+    }
+
+    #[test]
+    fn a_question_only_counts_for_the_same_tab_and_folder() {
+        let place = |terminal, folder: Option<&str>| Place {
+            terminal,
+            folder: folder.map(PathBuf::from),
+        };
+        let asked = place(1, Some("/photos"));
+        assert_eq!(asked, place(1, Some("/photos")));
+        assert_ne!(asked, place(2, Some("/photos")), "another tab");
+        assert_ne!(asked, place(1, Some("/music")), "the shell moved");
+        assert_ne!(asked, place(1, None), "we can't tell any more");
     }
 
     #[test]

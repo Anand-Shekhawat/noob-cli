@@ -19,6 +19,7 @@ mod runs;
 mod select;
 mod session;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
@@ -51,6 +52,8 @@ enum State {
 }
 
 pub struct TerminalView {
+    /// A number of its own, so others can tell which terminal they meant.
+    id: u64,
     state: Option<State>,
     /// How many lines up from the bottom you've scrolled (0 = following along).
     scroll: usize,
@@ -77,7 +80,9 @@ impl TerminalView {
 
     /// A terminal whose shell starts in `folder` (or the usual place if `None`).
     pub fn starting_in(folder: Option<std::path::PathBuf>) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         TerminalView {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             start_folder: folder,
             state: None,
             scroll: 0,
@@ -106,6 +111,11 @@ impl TerminalView {
             Some(State::Running(session)) => Some(session),
             _ => None,
         }
+    }
+
+    /// This terminal's own number (each tab has a different one).
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// The folder the shell is in right now, if we can tell.

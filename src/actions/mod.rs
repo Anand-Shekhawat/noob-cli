@@ -50,6 +50,20 @@ pub fn check_ready(command: &Command) -> Result<(), ActionError> {
     }
 }
 
+/// Checks the safety rules Noob's own actions follow but the real commands
+/// don't: `cp` and `mv` replace files without a word, and `>` writes through
+/// shortcuts. Whoever hands a real command to a shell must check this first.
+pub fn check_safe_in_shell(command: &Command) -> Result<(), ActionError> {
+    match command {
+        Command::Copy { from, to } | Command::Move { from, to } => {
+            moving::check_destination(from, to)
+        }
+        Command::Rename { from, to } => moving::check_rename(from, to),
+        Command::Write { file, .. } | Command::Add { file, .. } => files::check_writable(file),
+        _ => Ok(()),
+    }
+}
+
 /// Runs one command. `ask` puts a yes/no question on screen, for commands that need
 /// to ask in the middle of their work (like install).
 pub fn execute(command: &Command, ask: &mut dyn FnMut(&str) -> bool) -> Result<Reply, ActionError> {

@@ -16,8 +16,10 @@
 
 use std::path::Path;
 
+use crate::actions;
 use crate::command::{Command, ToolCommand};
 use crate::engine::{self, Line, Next, Place};
+use crate::parser;
 use crate::real::{self, Shell};
 
 /// What this computer offers, found out by the window (so the logic here stays testable).
@@ -72,6 +74,16 @@ fn on_path(program: &str) -> bool {
     })
 }
 
+/// Whether we know which folder the shell is in (on Windows, not yet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellFolder {
+    /// Noob has moved to the same folder, so names mean the same files.
+    Known,
+    /// A bare name like `notes.txt` could mean a different file to Noob than
+    /// to the shell.
+    Unknown,
+}
+
 /// What the bar should do with what you typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -94,13 +106,22 @@ pub enum Then {
 /// Decides what to do with one line typed into the bar.
 ///
 /// Names are read relative to the folder Noob is in, so the window first moves
-/// Noob to the shell's folder.
-pub fn plan(input: &str, setup: &Setup) -> Plan {
+/// Noob to the shell's folder, and says in `folder` whether that worked.
+pub fn plan(input: &str, setup: &Setup, folder: ShellFolder) -> Plan {
+    if folder == ShellFolder::Unknown
+        && let Ok(command) = parser::parse(input)
+        && names_could_mean_other_files(&command)
+    {
+        return plan_unsure(&command, setup);
+    }
     let (question, command) = match engine::understand(input, Place::Window) {
         Next::Finished(outcome) => return say(outcome.lines),
         Next::Ask { question, command } => (Some(question), command),
         Next::Run(command) => (None, command),
     };
+    if let Err(problem) = actions::check_safe_in_shell(&command) {
+        return say(vec![Line::Problem(problem.to_string())]);
+    }
     let then = then_for(&command, setup);
     let ask = match (&then, &command) {
         // Nothing will happen, so there's nothing to ask about.
@@ -108,6 +129,38 @@ pub fn plan(input: &str, setup: &Setup) -> Plan {
         (_, Command::Tool(tool)) => question.or_else(|| tool_question(tool)),
         _ => question,
     };
+    Plan { ask, then }
+}
+
+/// Could this command delete or replace the wrong file, because a name in it
+/// isn't a full path? (A full path means the same file from any folder.)
+fn names_could_mean_other_files(command: &Command) -> bool {
+    let bare = |name: &String| !Path::new(name).is_absolute();
+    match command {
+        Command::Delete(name) => bare(name),
+        Command::Write { file, .. } => bare(file),
+        Command::Copy { from, to } | Command::Move { from, to } | Command::Rename { from, to } => {
+            bare(from) || bare(to)
+        }
+        _ => false,
+    }
+}
+
+/// When we don't know the shell's folder, looking a bare name up would look in
+/// the wrong place. So: never delete by it, and always ask before replacing.
+fn plan_unsure(command: &Command, setup: &Setup) -> Plan {
+    if let Command::Delete(name) = command {
+        return say(vec![Line::Problem(format!(
+            "Noob can't tell which folder the terminal is in, so deleting \"{name}\" \
+             could delete the wrong one. Use its full path instead."
+        ))]);
+    }
+    let then = then_for(command, setup);
+    let ask = matches!(then, Then::Type { .. }).then(|| {
+        "Noob can't see the terminal's folder. If there's already something with \
+         that name, this could replace it. Type it anyway?"
+            .to_string()
+    });
     Plan { ask, then }
 }
 
@@ -235,6 +288,29 @@ fn about_tool(tool: &ToolCommand) -> String {
 mod tests {
     use super::*;
 
+    /// Plans with the shell's folder known, as on a Mac or Linux.
+    fn plan(input: &str, setup: &Setup) -> Plan {
+        super::plan(input, setup, ShellFolder::Known)
+    }
+
+    /// Plans without knowing the shell's folder, as on Windows.
+    fn plan_unsure(input: &str, setup: &Setup) -> Plan {
+        super::plan(input, setup, ShellFolder::Unknown)
+    }
+
+    fn windows() -> Setup {
+        Setup {
+            shell: Shell::PowerShell,
+            safe_delete: None,
+            has_homebrew: false,
+        }
+    }
+
+    fn refused(plan: &Plan) -> bool {
+        plan.ask.is_none()
+            && matches!(&plan.then, Then::Say(lines) if matches!(lines[..], [Line::Problem(_)]))
+    }
+
     fn mac() -> Setup {
         Setup {
             shell: Shell::Unix,
@@ -334,6 +410,80 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_name_is_never_deleted_when_the_shells_folder_is_unknown() {
+        // Cargo.toml exists in the folder these tests run in, standing in for
+        // a file in your home folder that shares its name with one in the shell's.
+        assert!(std::path::Path::new("Cargo.toml").exists());
+        for setup in [windows(), mac()] {
+            let plan = plan_unsure("delete Cargo.toml", &setup);
+            assert!(refused(&plan), "it could be the wrong file: {plan:?}");
+        }
+    }
+
+    #[test]
+    fn a_full_path_can_still_be_deleted_when_the_shells_folder_is_unknown() {
+        let folder = Folder::new("delete-full-path");
+        let file = folder.file("old.txt", "bye");
+        let plan = plan_unsure(&format!("delete \"{file}\""), &windows());
+        assert!(plan.ask.is_some());
+        assert_eq!(plan.then, Then::RunHere(Command::Delete(file)));
+    }
+
+    #[test]
+    fn anything_that_could_replace_a_file_asks_when_the_folder_is_unknown() {
+        for line in [
+            "write hello into notes.txt",
+            "copy a.txt to b.txt",
+            "move a.txt to b.txt",
+            "rename a.txt to b.txt",
+        ] {
+            let plan = plan_unsure(line, &windows());
+            assert!(plan.ask.is_some(), "{line}: {plan:?}");
+            assert!(matches!(plan.then, Then::Type { .. }), "{line}: {plan:?}");
+        }
+    }
+
+    #[test]
+    fn harmless_phrases_need_no_question_when_the_folder_is_unknown() {
+        let plan = plan_unsure("make folder photos", &windows());
+        assert_eq!(plan.ask, None);
+        assert!(matches!(plan.then, Then::Type { .. }));
+    }
+
+    #[test]
+    fn copy_move_and_rename_never_overwrite() {
+        let folder = Folder::new("no-overwrite");
+        let from = folder.file("a.txt", "new");
+        let to = folder.file("b.txt", "precious");
+        for verb in ["copy", "move", "rename"] {
+            let plan = plan(&format!("{verb} \"{from}\" to \"{to}\""), &mac());
+            assert!(refused(&plan), "{verb} would replace b.txt: {plan:?}");
+        }
+    }
+
+    #[test]
+    fn copying_into_a_folder_that_has_the_same_name_is_refused_too() {
+        let folder = Folder::new("no-overwrite-inside");
+        let from = folder.file("a.txt", "new");
+        std::fs::create_dir(folder.0.join("docs")).expect("make docs");
+        folder.file("docs/a.txt", "precious");
+        let docs = folder.0.join("docs").display().to_string();
+        let plan = plan(&format!("copy \"{from}\" to \"{docs}\""), &mac());
+        assert!(refused(&plan), "{plan:?}");
+    }
+
+    #[test]
+    fn copy_move_and_rename_to_a_free_name_are_typed() {
+        let folder = Folder::new("free-name");
+        let from = folder.file("a.txt", "hi");
+        let to = folder.0.join("c.txt").display().to_string();
+        for verb in ["copy", "move", "rename"] {
+            let plan = plan(&format!("{verb} \"{from}\" to \"{to}\""), &mac());
+            assert!(matches!(plan.then, Then::Type { .. }), "{verb}: {plan:?}");
+        }
+    }
+
+    #[test]
     fn replacing_a_files_text_asks_first() {
         let folder = Folder::new("write");
         let file = folder.file("notes.txt", "keep me");
@@ -341,6 +491,24 @@ mod tests {
         assert!(plan.ask.is_some());
         let quoted = real::quote_name(&file, Shell::Unix);
         assert_eq!(typed(&plan), format!("echo hello > {quoted}"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writing_through_a_shortcut_is_refused_like_noob_itself_does() {
+        // The shell's `>` follows a shortcut and empties the file it points to.
+        let folder = Folder::new("write-link");
+        let real_file = folder.file("notes.txt", "keep me");
+        let link = folder.0.join("link.txt");
+        std::os::unix::fs::symlink(&real_file, &link).expect("make shortcut");
+        let link = link.display();
+        for line in [
+            format!("write hello into \"{link}\""),
+            format!("add hello to \"{link}\""),
+        ] {
+            let plan = plan(&line, &mac());
+            assert!(refused(&plan), "{line}: {plan:?}");
+        }
     }
 
     #[test]
@@ -427,7 +595,7 @@ mod tests {
         };
         let plan = plan("make folder photos", &setup);
         assert!(typed(&plan).contains("photos"));
-        let install = super::plan("install git", &setup);
+        let install = super::plan("install git", &setup, ShellFolder::Known);
         assert!(typed(&install).starts_with("winget"), "{install:?}");
     }
 }

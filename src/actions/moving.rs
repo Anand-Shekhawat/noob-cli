@@ -114,14 +114,25 @@ pub(super) fn move_into(from: &str, to: &str) -> Result<Reply, ActionError> {
 }
 
 pub(super) fn rename(from: &str, to: &str) -> Result<Reply, ActionError> {
+    check_rename(from, to)?;
+    relocate(Path::new(from), Path::new(to))?;
+    Ok(Reply::Done(format!("Renamed \"{from}\" to \"{to}\"")))
+}
+
+/// Checks a rename wouldn't replace anything.
+pub(super) fn check_rename(from: &str, to: &str) -> Result<(), ActionError> {
     let source = existing(from)?;
     let target = Path::new(to);
     // "rename notes.txt to Notes.txt" on a Mac: both names are the same file, so it's fine.
     if !same_thing(source, target) {
         check_free(target)?;
     }
-    relocate(source, target)?;
-    Ok(Reply::Done(format!("Renamed \"{from}\" to \"{to}\"")))
+    Ok(())
+}
+
+/// Checks a copy or move wouldn't replace anything.
+pub(super) fn check_destination(from: &str, to: &str) -> Result<(), ActionError> {
+    free_destination(existing(from)?, to).map(|_| ())
 }
 
 /// The shared last step of move and rename.
