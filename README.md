@@ -77,9 +77,13 @@ Press **⌘K** (Ctrl+K on Windows, Ctrl+Shift+K on Linux) or click the bar, and 
 what you want, like `make folder photos` or `delete old.txt`.
 
 - Noob writes the real command into the terminal and says in one line what it does.
-  **Nothing runs until you press Enter** in the terminal yourself.
+  **A command in the terminal never runs until you press Enter** there yourself.
+- Two things Noob does itself, without the terminal: answering (`help`), and, on
+  computers without a Trash command (Windows, older Macs), deleting after your Yes.
 - Risky things (deleting, replacing a file's text, installing) ask first, with Yes and No.
-- Deleting always goes to the Trash (`trash` on a Mac), never `rm`.
+  If you switch tab or folder before answering, Noob forgets the question.
+- Deleting goes to the Trash or Recycle Bin, never `rm`. Copying, moving and renaming
+  refuse to replace something that's already there.
 - Names mean the files in the folder your terminal is in, and **Tab** finishes them.
 - If a program like `nano` is open, the bar waits and keeps what you typed.
 - `help` lists everything Noob understands.
@@ -101,9 +105,10 @@ light, and high contrast. Noob remembers them in a small text file you can read:
 
 ### Known limits
 
-- On Windows, the Noob bar can't yet see which folder PowerShell is in, so its
-  checks (like "does this file exist?") look in your home folder. Commands it
-  types still run in the right place.
+- On Windows, the Noob bar can't yet see which folder PowerShell is in. So it won't
+  delete by a bare name (give the full path instead), and it always asks before
+  anything that could replace a file. **In 1.0.0, deleting by a bare name could pick
+  a file with the same name in your home folder; please update.**
 - On Windows, letters typed with AltGr (like `@` on a German keyboard) don't reach
   the terminal yet.
 - Nobody has tried the app on a real Windows PC yet (it's built and tested on

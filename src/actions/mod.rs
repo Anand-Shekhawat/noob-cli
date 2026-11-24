@@ -50,6 +50,19 @@ pub fn check_ready(command: &Command) -> Result<(), ActionError> {
     }
 }
 
+/// Checks that copying, moving or renaming won't replace something. The real
+/// `cp` and `mv` replace files without a word; Noob never does, so whoever is
+/// about to hand the real command to a shell must check this first.
+pub fn check_wont_replace(command: &Command) -> Result<(), ActionError> {
+    match command {
+        Command::Copy { from, to } | Command::Move { from, to } => {
+            moving::check_destination(from, to)
+        }
+        Command::Rename { from, to } => moving::check_rename(from, to),
+        _ => Ok(()),
+    }
+}
+
 /// Runs one command. `ask` puts a yes/no question on screen, for commands that need
 /// to ask in the middle of their work (like install).
 pub fn execute(command: &Command, ask: &mut dyn FnMut(&str) -> bool) -> Result<Reply, ActionError> {
